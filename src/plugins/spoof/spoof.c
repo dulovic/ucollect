@@ -84,6 +84,12 @@ static void handle_request_v4(const struct request_v4 *request) {
 		.spoofed = true
 	};
 	strncpy(packet.message, MESSAGE, MLEN);
+	struct sockaddr_in bind_addr = {
+		.sin_family = AF_INET,
+		.sin_port = htons(5678),
+		.sin_addr.s_addr = htonl(0xAC140674)
+	};
+	C(bind(fd, (struct sockaddr *)&bind_addr, sizeof bind_addr), "bind to WAN");
 	// Construct the address for the packet
 	struct sockaddr_in addr = {
 		.sin_family = AF_INET,
