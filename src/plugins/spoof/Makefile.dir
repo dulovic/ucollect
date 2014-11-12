@@ -2,3 +2,5 @@ LIBRARIES += src/plugins/spoof/libplugin_spoof
 libplugin_spoof_MODULES := spoof
 
 DOCS += src/plugins/spoof/spoof
+BINARIES += src/plugins/spoof/testspoof
+testspoof_MODULES := test
