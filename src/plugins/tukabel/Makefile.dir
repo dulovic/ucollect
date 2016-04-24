@@ -1,0 +1,4 @@
+LIBRARIES += src/plugins/tukabel/libplugin_tukabel
+libplugin_tukabel_MODULES := tukabel
+
+DOCS += src/plugins/refused/tukabel

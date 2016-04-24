@@ -1,0 +1,20 @@
+Tukabel is a simple plugin created to demostrate ucollect plugin functionality, load some configs  and print packet information (currently to log with WARN level).
+
+Examle config to run this plugin:
+	config interface
+	        option ifname 'eth0'
+	
+	config uplink
+	        option name localhost
+	        option service 5679
+	        option cert "/etc/ucollect-dev.pem"
+	
+	config disabled_plugin tukabel
+	        option libname 'libplugin_tukabel.so'
+	        list test "tu mas banan"
+	        list test "a sicko v poradku"
+	        option Test3 "testujeme trojku"
+
+More info about used namig convetion:
+	https://youtu.be/97p-yaKmjZs
+
