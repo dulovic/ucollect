@@ -1,0 +1,4 @@
+LIBRARIES += src/plugins/tukabel/libplugin_statetrans
+libplugin_tukabel_MODULES := statetrans
+
+DOCS += src/plugins/statetrans
