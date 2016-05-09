@@ -17,53 +17,49 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef UCOLLECT_STATETRANS_STATEMACHINE_H
-#define UCOLLECT_STATETRANS_STATEMACHINE_H
+#ifndef UCOLLECT_STATETRANS_STRUCTS_H
+#define UCOLLECT_STATETRANS_STRUCTS_H
 
 #include "../../core/context.h"
-
-typedef uint16_t statemachine_state_t;
-typedef uint16_t statemachine_transition_t;
-
-typedef uint32_t timeslot_interval_t;
-typedef uint32_t timeslot_value_t;
-typedef double timeslot_aggr_value_t;
-typedef uint32_t timeslot_aggr_cnt_t;
-
 
 struct statemachine_context {
 	struct context *plugin_ctx; // Plugin context
 
-	timeslot_interval_t *timeslots;
 	size_t timeslot_cnt;
+	uint32_t *timeslots;
+
+	mem_pool *permanent_pool; // ?
+	// timeslot intervals
+	// timeslot cnt
+	
+	
+	
 };
 
-struct conversation {
-	statemachine_state_t state;
-	uint64_t timestamp;
-	statemachine_timeslot timeslots[]; // Flexible array member, number of elements should be equal to statemachine.transition_count
-};
 
 
-
-// learning_profiles[host_key][evaluator][convers_index].timeslots[ts] 
+// learning_profiles[host_key][evaluator][convers_index].timeslots[ts]  
 //      host_key - tree key
 //      evaluator - array index
 //      convers_index - index in linked list
 //      ts - timeslot index
+struct learning_profile {
+    
+};
 
+
+struct detection_profile {
+
+};
 
 ////////////////
-
-// Statemachine specific
+struct statemachine_context;
 struct learning_profile;
 struct detection_profile;
 
-
-
 struct statemachine {
 	const char *name;
-	size_t transition_count; // Number of states used by statemachine
+	size_t state_count; // Number of states used by statemachine
 	
 	void(*init_callback) (struct statemachine_context *ctx);
 	void(*finish_callback) (struct statemachine_context *ctx);
@@ -71,24 +67,5 @@ struct statemachine {
 	struct conversation *(*get_next_finished_conv_callback) (struct statemachine_context *ctx);
 	void(*clean_timedout_convs_callback) (struct statemachine_context *ctx);
 };
-
-
-struct statemachine_timeslot {
-	timeslot_value_t value;
-	timeslot_aggr_value_t aggr_value;
-	timeslot_aggr_cnt_t aggr_cnt;
-};
-
-/*
-	conversations[key<five_touple>]  // four_touple is enough
-						.state
-						.last_packet_ts
-						.timeslots[ts]
-							.values[statemachine.state_cnt] 			// Define type for count
-							.aggr_values[statemachine.state_cnt]
-							.aggr_value_cnt[statemachine.state_cnt]
-							.last_ts
-		
-*/
 
 #endif

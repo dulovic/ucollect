@@ -1,0 +1,70 @@
+/*
+    Ucollect - small utility for real-time analysis of network data
+    Copyright (C) 2015 Tomas Morvay
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program; if not, write to the Free Software Foundation, Inc.,
+    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+
+#include "evaluator_chebyshev.h"
+
+struct learning_profile {
+
+};
+
+
+struct detection_profile {
+
+};
+
+static void chebyshev_init(struct evaluator_context *ctx) {
+
+}
+
+static void chebyshev_destroy(struct evaluator_context *ctx) {
+
+}
+
+static void chebyshev_learn(struct evaluator_context *ctx, struct learning_profile *learning, size_t transition_count, const struct conversation *conv) {
+
+}
+
+static void chebyshev_detect(struct evaluator_context *ctx, struct detection_profile *detection, size_t transition_count, const struct conversation *conv) {
+
+}
+
+static struct detection_profile *chebyshev_create_profile(struct evaluator_context *ctx) {
+
+}
+
+
+////
+struct evaluator *evaluator_info_chebyshev(void) {
+	static struct evaluator evaluator = {
+		.name = "Chebyshev mean-distance",
+		.learning_profile_size = sizeof(struct learning_profile),
+		.detection_profile_size = sizeof(struct detection_profile),
+
+		.init_callback = chebyshev_init,
+		.finish_callback = chebyshev_destroy,
+		.learn_callback = chebyshev_learn,
+		.detect_callback = chebyshev_detect,
+		.clean_timedout_convs_callback = chebyshev_create_profile
+	};
+
+	return &evaluator;
+}
+///
+
+static 
