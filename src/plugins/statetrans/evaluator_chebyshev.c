@@ -36,15 +36,15 @@ static void chebyshev_destroy(struct evaluator_context *ctx) {
 
 }
 
-static void chebyshev_learn(struct evaluator_context *ctx, struct learn_profile *learning, size_t transition_count, const struct conversation *conv) {
+static void chebyshev_learn(struct evaluator_context *ctx, struct learn_profile *learning, size_t transition_count, const struct statemachine_conversation *conv) {
 
 }
 
-static void chebyshev_detect(struct evaluator_context *ctx, struct detect_profile *detection, size_t transition_count, const struct conversation *conv) {
+static double chebyshev_detect(struct evaluator_context *ctx, struct detect_profile *detection, size_t transition_count, const struct statemachine_conversation *conv) {
 
 }
 
-static struct detect_profile *chebyshev_create_profile(struct evaluator_context *ctx) {
+static void chebyshev_create_profile(struct evaluator_context *ctx, struct learn_profile *learning, struct detect_profile *detection) {
 
 }
 
@@ -60,11 +60,9 @@ struct evaluator *evaluator_info_chebyshev(void) {
 		.finish_callback = chebyshev_destroy,
 		.learn_callback = chebyshev_learn,
 		.detect_callback = chebyshev_detect,
-		.clean_timedout_convs_callback = chebyshev_create_profile
+		.create_profile = chebyshev_create_profile
 	};
 
 	return &evaluator;
 }
 ///
-
-static 

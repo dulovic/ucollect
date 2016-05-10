@@ -67,7 +67,7 @@ static void tcp_packet(struct statemachine_context *ctx, const struct packet_inf
 
 }
 
-struct conversation *tcp_get_next_finished_conv(struct statemachine_context *ctx) {
+struct statemachine_conversation *tcp_get_next_finished_conv(struct statemachine_context *ctx) {
 
 }
 

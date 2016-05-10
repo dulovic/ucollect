@@ -38,7 +38,9 @@ struct statemachine_context {
 	size_t timeslot_cnt;
 };
 
-struct conversation {
+struct statemachine_conversation {
+        //TODO: add fivetuple
+    
 	statemachine_state_t state;
 	uint64_t timestamp;
 	statemachine_timeslot timeslots[]; // Flexible array member, number of elements should be equal to statemachine.transition_count
@@ -68,7 +70,7 @@ struct statemachine {
 	void(*init_callback) (struct statemachine_context *ctx);
 	void(*finish_callback) (struct statemachine_context *ctx);
 	void(*packet_callback) (struct statemachine_context *ctx, const struct packet_info *info);	
-	struct conversation *(*get_next_finished_conv_callback) (struct statemachine_context *ctx);
+	struct statemachine_conversation *(*get_next_finished_conv_callback) (struct statemachine_context *ctx);
 	void(*clean_timedout_convs_callback) (struct statemachine_context *ctx);
 };
 

@@ -29,7 +29,7 @@
 typedef timeslot_interval_t uint32_t;
 
 struct context;
-struct conversation;
+struct statemachine_conversation;
 struct learn_profile;
 struct detect_profile;
 
@@ -38,8 +38,12 @@ struct evaluator_context {
 
 	size_t timeslot_cnt;
 	timeslot_interval_t *timeslots;
+        
+        
 
-	size_t transition_count;	// Set when meaning full, should be 0 otherwise (init etc..)
+        // Set when meaning full, should be 0 otherwise (init etc..)
+	size_t transition_count;	
+        size_t statmachine_index;
 };
 
 /*
@@ -60,9 +64,9 @@ struct evaluator {
 
     void (*init_callback) (struct evaluator_context *ctx);
     void (*finish_callback) (struct evaluator_context *ctx);
-    void (*learn_callback) (struct evaluator_context *ctx, struct learn_profile *learning, const struct conversation *conv);
-    double (*detect_callback) (struct evaluator_context *ctx, struct detect_profile *detection, const struct conversation *conv);
-    struct detect_profile *(*create_profile) (struct evaluator_context *ctx, struct learn_profile *learning);
+    void (*learn_callback) (struct evaluator_context *ctx, struct learn_profile *learning, const struct statemachine_conversation *conv);
+    double (*detect_callback) (struct evaluator_context *ctx, struct detect_profile *detection, const struct statemachine_conversation *conv);
+    void (*create_profile) (struct evaluator_context *ctx, struct learn_profile *learning, struct detect_profile *detection);
 };
 
 #endif
