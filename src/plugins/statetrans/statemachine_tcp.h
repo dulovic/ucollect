@@ -23,7 +23,7 @@
 #include "statemachine.h"
 
 enum statemachine_tcp_state : statemachine_state_t {
-	TCP_NO_STATE,
+	TCP_NO_STATE = 0,
 	TCP_SYN_SENT,
 	TCP_SYN_RECD,
 	TCP_ACK_WAIT,
@@ -50,7 +50,7 @@ enum statemachine_tcp_state : statemachine_state_t {
 };
 
 enum statemachine_tcp_transition : statemachine_transition_t {
-	TCP_NO_TRANS,
+	TCP_NO_TRANS = 0,
 	
 	T1,
 	T2,

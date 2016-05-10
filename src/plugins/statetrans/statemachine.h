@@ -56,8 +56,8 @@ struct conversation {
 ////////////////
 
 // Statemachine specific
-struct learning_profile;
-struct detection_profile;
+struct learn_profile;
+struct detect_profile;
 
 
 

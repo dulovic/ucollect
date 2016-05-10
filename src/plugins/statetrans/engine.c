@@ -24,6 +24,8 @@
 #include "../../core/trie.h"
 #include "../../core/packet.h"
 
+#include <assert.h>
+
 struct engine {
     enum detection_mode mode;
 
@@ -45,21 +47,6 @@ struct engine {
     struct trie *detect_profiles;
     size_t detect_profile_size;     // Size for one host 
     size_t *detect_profile_offsets; // For each host large block of data is allocated. Evaluator specific data begins at given offset for each evaluator
-
-    /*
-
-    learning_prof_offsets
-    detection_prof_offsets
-
-    learn_profiles[host_id][statemachine]
-    detect_profiles[host_id][statemachine]
-
-
-    - learn_profiles= trie()
-    - detect_profiles = trie()
-    - learn_profile_size
-    - detect_profile_size
-     */
 };
 
 struct trie_data {
@@ -169,37 +156,7 @@ static uint8_t *engine_lookup_get_host_key(const struct packet_info *packet, siz
     *key_size = packet->addr_len;
 }
 
-void asdf(struct engine *asdf) {
 
-}
-
-//void engine_lookup_host_learn_profiles(struct engine *en, struct context *ctx, const struct packet_info *packet) {
-
-static uint8_t *engine_lookup_host_learn_profiles(struct engine *en, const uint8_t *key, size_t key_size) {
-
-    struct trie_data **data = trie_index(en->learn_profiles, key, key_size);
-
-    // New host - alloc & initialize to zeros
-    if (*data == NULL) {
-        *data = mem_pool_alloc(en->learn_profiles_pool, en->);
-        memset(*data, 0, en->learn_profile_size);
-    }
-
-    return (uint8_t *)*data;
-}
-
-static uint8_t *engine_lookup_host_detect_profiles(struct engine *en, uint8_t *key, size_t key_size) {
-
-    struct trie_data **data = trie_index(en->detect_profiles, key, key_size);
-
-    // New host - alloc & initialize to zeros
-    if (*data == NULL) {
-        *data = mem_pool_alloc(en->detect_profiles_pool, en->detect_profile_size);
-        memset(*data, 0, en->detect_profile_size);
-    }
-
-    return (uint8_t *)*data;
-}
 static uint8_t *engine_get_host_profile(struct engine *en, uint8_t *host_key, size_t host_key_size) {
     struct trie *profiles_trie;
     struct trie_data **data;
@@ -222,19 +179,47 @@ static uint8_t *engine_get_host_profile(struct engine *en, uint8_t *host_key, si
     return (uint8_t *)*data;
 }
 
-static void engine_process_finished_conv(struct engine *en, const struct conversation *conv, const uint8_t *host_profile) {
-    
+// Pass conversation to all evaluators and return max anomaly score (in detection mode)
+static double engine_process_finished_conv(struct engine *en, struct evaluator_context evaluator_ctx, const uint8_t *host_profile, const struct conversation *conv) {
+    int i_ev;
+
+    // Choose evaluator callback according to mode
+    if (en->mode == LEARNING) {
+        // Pass next finished conversation to all evaluators
+        for (i_ev = 0; i_ev < en->statemachine_cnt; i_ev++) {
+            struct evaluator *ev = en->evaluators[i_ev];
+            
+            // Evaluator-specific data in learning profile
+            struct learn_profile *learning;
+            learning = (struct learn_profile *) (host_profile + en->learn_profile_offsets[i_ev]);
+
+            ev->learn_callback(evaluator_ctx, learning, conv);
+        }
+        return 0.0L; // Not detecting
+        
+    } else { // if (en->mode == DETECTION) 
+        double max_score = 0.0L;
+        
+        // Pass next finished conversation to all evaluators
+        for (i_ev = 0; i_ev < en->statemachine_cnt; i_ev++) {
+            struct evaluator *ev = en->evaluators[i_ev];
+            
+            // Evaluator-specific data in detection profile
+            struct detect_profile *detection;
+            detection = (struct detect_profile *) (host_profile + en->detect_profile_offsets[i_ev]);
+
+            double score = ev->detect_callback(evaluator_ctx, detection, conv);
+            if (score > max_score)
+                max_score = score;  // TODO: remember evaluator index?
+        }
+    }
+
 }
 
-void engine_handle_packet(struct engine *en, struct context *ctx, const struct packet_info *packet) {
-    // Prepare evaluator context
-    struct evaluator_context ev_ctx = {
-        .plugin_ctx = ctx,
-        .timeslots = en->timeslots,
-        .timeslot_cnt = en->timeslot_cnt,
-        //.transition_count = 0		// Will be set per statemachine
-    };
 
+void engine_handle_packet(struct engine *en, struct context *ctx, const struct packet_info *packet) {
+    assert(en->mode == LEARNING || en->mode == DETECTION);
+    
     // Prepare statemachine context
     struct statemachine_context sm_ctx = {
         .plugin_ctx = ctx,
@@ -258,7 +243,7 @@ void engine_handle_packet(struct engine *en, struct context *ctx, const struct p
 
     // Load host profile 
     
-    uint8_t *host_profile = NULL;
+    uint8_t *host_profile = engine_get_host_profile(en, host_key, host_key_size);
     
 
     // Pass packet to each statemachine & process new finished conversations reported by statemachine
@@ -273,31 +258,7 @@ void engine_handle_packet(struct engine *en, struct context *ctx, const struct p
         // Process finished (closed, timedout, ..) conversations from statemachine
         struct conversation *conv;
         while (conv = sm->get_next_finished_conv_callback(&sm_ctx)) {
-            
-            // Pass next finished conversation to all evaluators
-            int i_ev;
-            for (i_ev = 0; i_ev < en->statemachine_cnt; i_ev++) {
-                struct evaluator *ev = en->evaluators[i_ev];
-                
-                // Choose evalutor callback according to mode
-                if (en->mode == LEARNING) {
-                    // Evaluator-specific data in learning profile
-                    struct learn_profile *learning; 
-                    learning = (struct learn_profile *) (host_profile + en->learn_profile_offsets[i_ev]);
-                    
-                    ev->learn_callback(ev_ctx, learning, conv);
-                    
-                } else if (en->mode == DETECTION) {
-                    // Evaluator-specific data in detection profile
-                    struct detect_profile *detection; 
-                    detection = (struct detect_profile *) (host_profile + en->detect_profile_offsets[i_ev]);
-                
-                    ev->detect_callback(ev_ctx, detection, conv);
-                } else {
-                    ulog(LLOG_ERROR, "Statetrans engine: Invalid mode(%d)\n", en->mode)
-                }
-                
-            }
+            engine_process_finished_conv(en, ev_ctx, host_profile, conv);
         }
     }
 
@@ -315,13 +276,19 @@ void engine_change_mode(struct engine *en, struct context *ctx, detection_mode m
 
     // TODO: create detection_profiles:
     /*
-            free old profiles mem_pool
-            create new profiles mem_pool
+     det_profs = tree_walk(learn, call ev.create_prof)
+     
+     dealloc learn_pool
+     */
+    /*
+            reset detection profiles mem_pool
+            new tree for det profiles
             for each learning_profile
                     host = learning_profile.host
                     for each evaluator
                             detection_profiles[host][evaluator] = evaluator.create_profile(learning_profile.conv_list)
-
+            
+     
      */
 }
 

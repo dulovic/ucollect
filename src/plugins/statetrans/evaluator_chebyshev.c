@@ -19,12 +19,12 @@
 
 #include "evaluator_chebyshev.h"
 
-struct learning_profile {
+struct learn_profile {
 
 };
 
 
-struct detection_profile {
+struct detect_profile {
 
 };
 
@@ -36,15 +36,15 @@ static void chebyshev_destroy(struct evaluator_context *ctx) {
 
 }
 
-static void chebyshev_learn(struct evaluator_context *ctx, struct learning_profile *learning, size_t transition_count, const struct conversation *conv) {
+static void chebyshev_learn(struct evaluator_context *ctx, struct learn_profile *learning, size_t transition_count, const struct conversation *conv) {
 
 }
 
-static void chebyshev_detect(struct evaluator_context *ctx, struct detection_profile *detection, size_t transition_count, const struct conversation *conv) {
+static void chebyshev_detect(struct evaluator_context *ctx, struct detect_profile *detection, size_t transition_count, const struct conversation *conv) {
 
 }
 
-static struct detection_profile *chebyshev_create_profile(struct evaluator_context *ctx) {
+static struct detect_profile *chebyshev_create_profile(struct evaluator_context *ctx) {
 
 }
 
@@ -53,8 +53,8 @@ static struct detection_profile *chebyshev_create_profile(struct evaluator_conte
 struct evaluator *evaluator_info_chebyshev(void) {
 	static struct evaluator evaluator = {
 		.name = "Chebyshev mean-distance",
-		.learning_profile_size = sizeof(struct learning_profile),
-		.detection_profile_size = sizeof(struct detection_profile),
+		.learn_profile_size = sizeof(struct learn_profile),
+		.detect_profile_size = sizeof(struct detect_profile),
 
 		.init_callback = chebyshev_init,
 		.finish_callback = chebyshev_destroy,

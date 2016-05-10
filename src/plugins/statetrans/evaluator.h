@@ -23,12 +23,15 @@
 //#include "statemachine.h"
 //#include "../../core/context.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 typedef timeslot_interval_t uint32_t;
 
 struct context;
 struct conversation;
-struct learning_profile;
-struct detection_profile;
+struct learn_profile;
+struct detect_profile;
 
 struct evaluator_context {
 	struct context *plugin_ctx; // Plugin context
@@ -51,15 +54,15 @@ conversations[key<five_touple>]  // four_touple is enough
 */
 
 struct evaluator {
-	const char *name;
-	size_t learning_profile_size;
-	size_t detection_profile_size;
+    const char *name;
+    size_t learn_profile_size;
+    size_t detect_profile_size;
 
-	void(*init_callback) (struct evaluator_context *ctx);
-	void(*finish_callback) (struct evaluator_context *ctx);
-	void(*learn_callback) (struct evaluator_context *ctx, struct learning_profile *learning, const struct conversation *conv);
-	void(*detect_callback) (struct evaluator_context *ctx, struct detection_profile *detection, const struct conversation *conv);
-	struct detection_profile *(*create_profile) (struct evaluator_context *ctx, struct learning_profile *learning);
+    void (*init_callback) (struct evaluator_context *ctx);
+    void (*finish_callback) (struct evaluator_context *ctx);
+    void (*learn_callback) (struct evaluator_context *ctx, struct learn_profile *learning, const struct conversation *conv);
+    double (*detect_callback) (struct evaluator_context *ctx, struct detect_profile *detection, const struct conversation *conv);
+    struct detect_profile *(*create_profile) (struct evaluator_context *ctx, struct learn_profile *learning);
 };
 
 #endif
