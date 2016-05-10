@@ -32,11 +32,13 @@ struct engine {
     timeslot_interval_t *timeslots;
     size_t timeslot_cnt;
 
-    struct statemachine **statemachines;
     size_t statemachine_cnt;
+    struct statemachine **statemachines;
+    struct statemachine_data **statemachines_data;
 
-    struct evaluator **evaluators;
     size_t evaluator_cnt;
+    struct evaluator **evaluators;
+    struct evaluators_data **evaluators_data;
 
     struct mem_pool *learn_profiles_pool;
     struct trie *learn_profiles;
@@ -79,11 +81,10 @@ struct engine *engine_create(struct context *ctx, timeslot_interval_t *timeslots
     en->timeslots = mem_pool_alloc(ctx->permanent_pool, timeslots_size);
     memcpy(en->timeslots, timeslots, timeslots_size);
 
-
     // Get info about statemachines
     en->statemachine_cnt = 1;
     en->statemachines = mem_pool_alloc(ctx->permanent_pool, en->statemachine_cnt * sizeof (struct statemachine*));
-    en->statemachines[0] = statemachine_info_tcp();
+    en->statemachines[0] = statemachine_info_tcp();`
 
     // Get info about evaluators
     en->evaluator_cnt = 1;
@@ -133,6 +134,8 @@ void engine_handle_packet(struct engine *en, struct context *ctx, const struct p
     size_t i_sm; // Statemachine index
     for (i_sm = 0; i_sm < en->statemachine_cnt; i_sm++) {
         struct statemachine *sm = en->statemachines[i_sm];
+        
+        sm_ctx.data = en->statemachines_data[i_sm]; // Restore pointer to statemachine data
         sm->packet_callback(&sm_ctx, packet);
 
         // Modify evaluator context according to current statemachine
@@ -144,6 +147,7 @@ void engine_handle_packet(struct engine *en, struct context *ctx, const struct p
         while (conv = sm->get_next_finished_conv_callback(&sm_ctx)) {
             engine_process_finished_conv(en, ev_ctx, host_profile, conv);
         }
+        en->statemachines_data[i_sm] = sm_ctx.data; // Save pointer to statemachine data
     }
 
 }
@@ -159,13 +163,9 @@ void engine_change_mode(struct engine *en, struct context *ctx, enum detection_m
         return;
     }
 
-
-
     // Clear detection profiles trie
     mem_pool_reset(en->detect_profiles_pool);
     en->detect_profiles = trie_alloc(en->detect_profiles_pool);
-
-
 
     trie_walk(en->learn_profiles, engined_change_mode_walk_trie_cb, en, ctx->temp_pool);
     en->mode = mode;
@@ -186,6 +186,9 @@ static void engine_alloc_profiles(struct engine *en) {
 }
 
 static void engine_init_statemachines(struct engine *en) {
+    // Alloc storage for pointers to statemachine data
+    en->statemachines_data = mem_pool_alloc(en->plugin_ctx->permanent_pool, en->statemachine_cnt * sizeof(struct statemachine_data *));
+    
     struct statemachine_context sm_ctx = {
         .plugin_ctx = en->plugin_ctx,
         .timeslots = en->timeslots,
@@ -195,11 +198,24 @@ static void engine_init_statemachines(struct engine *en) {
     size_t i_sm;
     for (i_sm = 0; i_sm < en->statemachine_cnt; i_sm++) {
         ulog(LLOG_DEBUG, "Statetrans engine: Initializing statemachine '%s'\n", en->statemachines[i_sm]->name);
+        
+        // Initialize statemachine data
+        en->statemachines_data[i_sm] = NULL;
+        sm_ctx.data = en->statemachines_data[i_sm];
+        
+        // Initialize statemachine
         en->statemachines[i_sm]->init_callback(sm_ctx);
+        
+        // Save statemachine data
+        en->statemachines_data[i_sm] = sm_ctx.data;
+        
     }
 }
 
 static void engine_init_evaluators(struct engine *en) {
+    // Alloc storage for pointers to statemachine data
+    en->evaluators_data = mem_pool_alloc(en->plugin_ctx->permanent_pool, en->evaluator_cnt * sizeof(struct evaluators_data *));
+    
     struct evaluator_context ev_ctx = {
         .plugin_ctx = en->plugin_ctx,
         .timeslots = en->timeslots,
@@ -219,7 +235,12 @@ static void engine_init_evaluators(struct engine *en) {
     size_t i_ev;
     for (i_ev = 0; i_ev < en->evaluator_cnt; i_ev++) {
         ulog(LLOG_DEBUG, "Statetrans engine: Initializing evaluator '%s'\n", en->evaluators[i_ev]->name);
+        
+        // Initialize evaluator data pointe & call evaluator initializer
+        en->evaluators_data[i_ev] = NULL;
+        ev_ctx.data = en->evaluators_data[i_ev];
         en->evaluators[i_ev]->init_callback(ev_ctx);
+        en->evaluators_data[i_ev] = ev_ctx.data;
 
         // Remember evaluator offset in common profile data block for one host
         en->learn_eval_profile_offsets[i_ev] = en->learn_host_profile_size;
@@ -280,7 +301,10 @@ static double engine_process_finished_conv(struct engine *en, struct evaluator_c
             struct learn_profile *learning;
             learning = (struct learn_profile *) (host_profile + en->learn_eval_profile_offsets[i_ev]);
 
+            // Restore evaluator data pointer, do the learning and save the pointer
+            ev_ctx.data = en->evaluators_data[i_ev]; 
             ev->learn_callback(ev_ctx, learning, conv);
+            en->evaluators_data[i_ev] = ev_ctx.data;
         }
         // max_score unchanged - not detecting
         
@@ -294,10 +318,16 @@ static double engine_process_finished_conv(struct engine *en, struct evaluator_c
             struct detect_profile *detection;
             detection = (struct detect_profile *) (host_profile + en->detect_eval_profile_offsets[i_ev]);
 
+            
+            // Restore evaluator data pointer, do the detection and save the pointer
+            ev_ctx.data = en->evaluators_data[i_ev]; 
             double score = ev->detect_callback(ev_ctx, detection, conv);
+            en->evaluators_data[i_ev] = ev_ctx.data;
+            
             if (score > max_score)
                 max_score = score;  // TODO: remember evaluator index?
         }
+        ulog(LLOG_INFO, "Statetrans engine: Anomaly score = %.2lf", max_score);
     }
 
     return max_score;
@@ -339,7 +369,11 @@ static void engined_change_mode_walk_trie_cb(const uint8_t *key, size_t key_size
             struct detect_profile *detection;
             detection = (struct detect_profile *) (host_detection + en->learn_eval_profile_offsets[i_ev]);
 
+            
+            // Restore evaluator data pointer, do the profile creation and save the pointer
+            ev_ctx.data = en->evaluators_data[i_ev]; 
             ev->create_profile(ev_ctx, learning, detection);
+            en->evaluators_data[i_ev] = ev_ctx.data;
         }
     }
 }

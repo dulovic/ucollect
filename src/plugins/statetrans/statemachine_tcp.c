@@ -17,7 +17,7 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#include "statemachine.h"
+#include "statemachine_tcp.h"
 
 #include "../../core/context.h"
 
@@ -56,14 +56,14 @@ STATEMACHINE
 ////
 
 static void tcp_init(struct statemachine_context *ctx) {
-
+    
 }
 
 static void tcp_destroy(struct statemachine_context *ctx) {
 
 }
 
-static void tcp_packet(struct statemachine_context *ctx, const struct packet_info *info); {
+static void tcp_packet(struct statemachine_context *ctx, const struct packet_info *info) {
 
 }
 
@@ -91,5 +91,3 @@ struct statemachine *statemachine_info_tcp(void) {
 	return &statemachine;
 }
 ///
-
-static 

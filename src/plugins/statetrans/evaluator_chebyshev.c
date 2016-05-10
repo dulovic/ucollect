@@ -19,8 +19,12 @@
 
 #include "evaluator_chebyshev.h"
 
-struct learn_profile {
+#include "../../core/mem_pool.h"
 
+
+struct learn_profile {
+    struct mem_pool *active_pool, *standby_pool;
+    
 };
 
 

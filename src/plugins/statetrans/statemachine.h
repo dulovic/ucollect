@@ -30,23 +30,25 @@ typedef uint32_t timeslot_value_t;
 typedef double timeslot_aggr_value_t;
 typedef uint32_t timeslot_aggr_cnt_t;
 
+struct statemachine_data;
 
 struct statemachine_context {
 	struct context *plugin_ctx; // Plugin context
-
 	timeslot_interval_t *timeslots;
 	size_t timeslot_cnt;
+        struct statemachine_data *data; // Can be changed by statemachine
 };
 
+// Generalized conversation - each statemachine can have different nu
 struct statemachine_conversation {
-        //TODO: add fivetuple
+    struct conversation_id *id;
+    statemachine_state_t state;
+    uint64_t last_pkt_ts;
     
-	statemachine_state_t state;
-	uint64_t timestamp;
-	statemachine_timeslot timeslots[]; // Flexible array member, number of elements should be equal to statemachine.transition_count
+    // Flexible array member, number of elements is equal to number of timeslots
+    //  usage: timeslots[ts][statemachine.trans_cnt]
+    statemachine_timeslot *timeslots[]; 
 };
-
-
 
 // learning_profiles[host_key][evaluator][convers_index].timeslots[ts] 
 //      host_key - tree key
@@ -60,8 +62,6 @@ struct statemachine_conversation {
 // Statemachine specific
 struct learn_profile;
 struct detect_profile;
-
-
 
 struct statemachine {
 	const char *name;

@@ -30,8 +30,8 @@ typedef timeslot_interval_t uint32_t;
 
 struct context;
 struct statemachine_conversation;
-struct learn_profile;
-struct detect_profile;
+
+struct evaluator_data;
 
 struct evaluator_context {
 	struct context *plugin_ctx; // Plugin context
@@ -39,12 +39,15 @@ struct evaluator_context {
 	size_t timeslot_cnt;
 	timeslot_interval_t *timeslots;
         
-        
-
         // Set when meaning full, should be 0 otherwise (init etc..)
 	size_t transition_count;	
         size_t statmachine_index;
+        
+        struct evaluator_data *data;
 };
+
+struct learn_profile;
+struct detect_profile;
 
 /*
 tree of conversations (statemachine local)
@@ -56,6 +59,11 @@ conversations[key<five_touple>]  // four_touple is enough
 									.aggr_value
 									.aggr_cnt
 */
+
+struct evaluator_conversation {
+    
+
+};
 
 struct evaluator {
     const char *name;

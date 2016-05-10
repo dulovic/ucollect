@@ -99,12 +99,12 @@ enum statemachine_tcp_transition : statemachine_transition_t {
 #endif
 
 	TCP_TRANS_COUNT	// Must be the last one
-}
+};
 
 struct statemachine_tcp_conversation {
-	statemachine_tcp_state_t state;
+	statemachine_tcp_state state;
 	uint64_t timestamp;
-	statemachine_timeslot timeslots[TCP_STATE_COUNTS];
+	statemachine_timeslot timeslots[TCP_STATE_COUNT];
 };
 
 

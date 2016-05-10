@@ -32,8 +32,8 @@ handle_packet()
 struct engine_data;
 
 enum detection_mode {
-	LEARNING,
-	DETECTION
+    LEARNING,
+    DETECTION
 };
 
 struct engine *engine_create(struct context *ctx, timeslot_interval_t *timeslots, size_t timeslot_cnt);

@@ -20,6 +20,9 @@
 #ifndef UCOLLECT_STATETRANS_CONVERSATION_H
 #define UCOLLECT_STATETRANS_CONVERSATION_H
 
+#include "../../core/packet.h"
+#include "../../core/mem_pool.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -33,6 +36,26 @@ load_plugin()
 
 handle_packet()
 */
+
+
+
+// Identifier made up from field in struct packet (core/packet.h)
+struct conversation_id {
+    // If ip_protocol == 4 addr_len is 4, if ip_protocol == 6 addr_len = 16
+    unsigned char ip_protocol;
+    
+    const void *src_ip;
+    const void *dst_ip;
+    
+    uint16_t src_port;
+    uint16_t dst_port;
+    
+    // 'T' - TCP, 'U' - UDP, 'I' - ICMP
+    char app_protocol;  
+};
+
+size_t conversation_addr_len(struct conversation_id *conv);
+void conversation_extract_identifier(const packet_info *pkt);
 
 
 #endif
