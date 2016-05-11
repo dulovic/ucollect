@@ -24,6 +24,7 @@
 
 enum statemachine_tcp_state : statemachine_state_t {
 	TCP_NO_STATE = 0,
+        TCP_RST_SEEN,
 	TCP_SYN_SENT,
 	TCP_SYN_RECD,
 	TCP_ACK_WAIT,
@@ -35,8 +36,8 @@ enum statemachine_tcp_state : statemachine_state_t {
 	TCP_CLOSING_2,
 	TCP_CLOSING,
 
-	TCP_CLOSE_WAIT,
 	TCP_CLOSE_WAIT_1,
+	TCP_CLOSE_WAIT,
 	TCP_LAST_ACK_1,
 	TCP_LAST_ACK,
 	TCP_LAST_ACK_2,
@@ -96,7 +97,7 @@ enum statemachine_tcp_transition : statemachine_transition_t {
 	T40,
 	T41,
 	T42,
-#endif
+#endif // STATETRANS_TCP_LOOP_TRANSITIONS
 
 	TCP_TRANS_COUNT	// Must be the last one
 };
