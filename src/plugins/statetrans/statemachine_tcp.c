@@ -327,7 +327,7 @@ static enum statemachine_tcp_transition tcp_track_state(struct trie_data *conv, 
 						new_state = TCP_SYN_RECD;
 						transition = T1;
 					}
-				} else {
+				} else { // DIR_OUT
 					// Local site will be the client
 					if (flags & TCP_SYN) {
 						new_state = TCP_SYN_SENT;
@@ -384,11 +384,12 @@ static enum statemachine_tcp_transition tcp_track_state(struct trie_data *conv, 
 				break;
 				
 			case TCP_ESTABLISHED:
-				if (dir == DIR_IN) {
-					if ((flags & TCP_RESET) || (flags & TCP_SYN)) {
-						new_state = TCP_CLOSED;
-						transition = T20;
-					} else if (flags & TCP_FIN) {
+				// SYN can be retransmitted
+				if ((flags & TCP_RESET) /*|| (flags & TCP_SYN)*/) {
+					new_state = TCP_CLOSED;
+					transition = T20;
+				} else if (dir == DIR_IN) { 
+					if (flags & TCP_FIN) {
 						new_state = TCP_CLOSE_WAIT_1;
 						transition = T10;
 					}
@@ -442,7 +443,7 @@ static enum statemachine_tcp_transition tcp_track_state(struct trie_data *conv, 
 				}
 				break;
 				
-			case TCP_FIN_WAIT_2:
+			case TCP_CLOSING_2:
 				if (dir == DIR_OUT) {
 					if (flags & TCP_ACK) {
 						new_state = TCP_CLOSED;
@@ -506,7 +507,7 @@ static enum statemachine_tcp_transition tcp_track_state(struct trie_data *conv, 
 				if (dir == DIR_IN) {
 					if (flags & TCP_ACK) {
 						new_state = TCP_CLOSED;
-						transition = T19;
+						transition = T28;
 					} 
 				}
 				break;
