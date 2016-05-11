@@ -32,7 +32,7 @@ struct tcp_conv_list {
     size_t count;
 };
 
-#define LIST_NAME(X) statemachine_tcp_conv_##X
+#define LIST_NAME(X) tcp_conv_list_##X
 #define LIST_NODE struct tcp_conv_list_node
 #define LIST_BASE struct tcp_conv_list
 #define LIST_COUNT

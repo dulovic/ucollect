@@ -41,8 +41,8 @@ handle_packet()
 
 // Identifier made up from field in struct packet (core/packet.h)
 struct conversation_id {
-    // If ip_protocol == 4 addr_len is 4, if ip_protocol == 6 addr_len = 16
-    unsigned char ip_protocol;
+    // If v6 == true addr_len is 16, else 4
+    bool v6;
     
     const void *src_ip;
     const void *dst_ip;

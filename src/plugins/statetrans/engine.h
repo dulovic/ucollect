@@ -23,14 +23,6 @@
 #include "statemachine.h"
 #include "evaluator.h"
 
-/*
-init(sm_list, evaluator_list)
-
-handle_packet()
-*/
-
-struct engine_data;
-
 enum detection_mode {
     LEARNING,
     DETECTION

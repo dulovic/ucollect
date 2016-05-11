@@ -20,26 +20,22 @@
 #include "conversation.h"
 
 size_t conversation_addr_len(struct conversation_id *conv) {
-    switch(conv->ip_protocol) {
-        case 4:
-            return 4;
-            break;
-            
-        case 6:
-            return 16;
-            break;
-    }
-    return 0; // Not IP or invalid value
+    return (conv->v6) ? 16 : 4;
 }
 
 // Create conversation identifier from packet info
 void conversation_extract_identifier(struct conversation_id *identif, struct mem_pool *pool, const struct packet_info *pkt) {
-    identif->ip_protocol = pkt->ip_protocol;
+    identif->v6 = (pkt->ip_protocol == 6);
     
-    identif->src_ip = mem_pool_alloc(pool, pkt->addr_len);
-    memcpy(identif->src_ip, pkt->addresses[END_SRC]);
-    identif->dst_ip = mem_pool_alloc(pool, pkt->addr_len);
-    memcpy(identif->dst_ip, pkt->addresses[END_DST]);
+    if (pkt->ip_protocol) {
+	identif->src_ip = mem_pool_alloc(pool, pkt->addr_len);
+	memcpy(identif->src_ip, pkt->addresses[END_SRC]);
+	identif->dst_ip = mem_pool_alloc(pool, pkt->addr_len);
+	memcpy(identif->dst_ip, pkt->addresses[END_DST]);
+    } else {
+	identif->src_ip = NULL;
+	identif->dst_ip = NULL;
+    }
         
     identif->src_port = pkt->ports[END_SRC];
     identif->dst_port = pkt->ports[END_DST];

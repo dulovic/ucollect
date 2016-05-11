@@ -23,103 +23,139 @@
 #include "../../core/mem_pool.h"
 #include "../../core/trie.h"
 
-#include "statemachine_tcp_conv_list.h"
+#include <stdbool.h>
 
-/*
-STATEMACHINE
-	initializator:
-	 - statemachine_info_[statemachine_name]() 
+//#include "statemachine_tcp_conv_list.h"
 
-	consts:
-	- transitions[]
-	- transition_cnt
-	- consolidate_lower_tresh = 200
-	- consolidate_treshold_portion = 0.2
-	
-	internal data:
-	//TODO: use one mem pool & copy in evaluator
-	- conv_active_mempool		- to store data for active conv. for this SM  
-	- conv_trie_active_mempool	- to store trie "overhead" structs
-	- active_conversations = trie()				// permanent pool, changed when consolidating
-	- timedout_conversations = linked_list()	// in tmp_pool
-	- last_timedout_check_ts = 0
-	- delayed_deleted_count = 0
-	
-	functions:
-	- add_pkt_to_conv(conv, pkt)
-	- detect_timedout_convs(now)
-	
-	callback functions:
-	- init()
-	- finish()
-	- handle_packet(learning_profiles[host][SM], pk)
-	- get_next_finished_conv()
-	- cleanup_timedout_convs()
-*/
 
-////
+
+// Conversation - trie conversations, linked list of timedout convs
+struct trie_data {
+    struct trie_data *next, *prev; // Link list sorted by last access time
+    struct statemachine_conversation c;
+};
+
+struct tcp_conv_list {
+    struct trie_data *head, *tail;
+    size_t count;
+};
+
+#define LIST_NODE struct tcp_conv_list
+#define LIST_BASE struct user_data
+#define LIST_PREV prev
+#define LIST_NAME(X) conv_list_##X
+#define LIST_COUNT count
+#define LIST_WANT_APPEND_POOL
+#define LIST_WANT_REMOVE
+#define LIST_WANT_LFOR
+#define LIST_INSERT_AFTER
+#include "../../core/link_list.h"
+
 
 struct statemachine_data {
-    struct mem_pool *active_convs_pool;
-    struct trie *active_convs;
+    struct mem_pool *active_pool;
+    struct trie *conv_tree; // Trie of conversations for fast lookup
+    struct tcp_conv_list conv_list; // Link list sorted by the last packet ts
     size_t delayed_deleted_count;
-    
-    struct mem_pool *finished_convs_pool;
-    struct tcp_conv_list finished_convs;
-    
-    // How often should be tree of active conversations checked for the timed out ones
-    uint64_t timeout_check_interval; 
-    // Timestamp of last n microseconds
-    uint64_t last_timedout_check_ts; 
     
     size_t consolidate_lower_treshold;
     double consolidate_treshold_portion;
+    
+    // How often should be tree of active conversations checked for the timed out ones (in us)
+    uint64_t timeout_check_interval; 
+    // Timestamp of last timeout check in us
+    uint64_t last_timedout_check_ts; 
+    
+    // Connection timouts (in ms)
+    uint32_t syn_timeout;
+    uint32_t estab_timeout;
+    uint32_t rst_timeout;
+    uint32_t fin_timeout;
+    uint32_t last_ack_timeout;
 };
 
-// Trie data for active conversations
-struct trie_data {
-    struct statemachine_conversation *conv;
+struct tcp_conv_key {
+    uint8_t size;
+    uint16_t src_port, dst_port;
+    uint8_t addresses[];    
 };
 
+struct tcp_conv_key *tcp_get_key(struct packet_info *pkt, struct mem_pool *pool, bool reversed);
+bool tcp_is_timedout(struct statemachine_data *d, struct trie_data *conv, uint64_t now);
+struct trie_data *tcp_lookup_conv(struct statemachine_context *ctx, const struct packet_info *pkt);
+void tcp_lookup_timedout_convs(struct statemachine_context *ctx, uint64_t now);
+void tcp_lookup_timedout_callback(const uint8_t *key, size_t key_size, struct trie_data *data, void *userdata);
 
-static void tcp_lookup_timedout_convs(struct statemachine_context *ctx, uint64_t now);
-static void tcp_lookup_timedout_callback(const uint8_t *key, size_t key_size, struct trie_data *data, void *userdata);
 
 static void tcp_init(struct statemachine_context *ctx) {
+    // Alloc statemachine data
     ctx->data = mem_pool_alloc(ctx->plugin_ctx->permanent_pool, sizeof(struct statemachine_data));
     struct statemachine_data *d = ctx->data;
     
-    d->active_convs_pool = mem_pool_create("Statetrans TCP active conversations");
-    d->active_convs = trie_alloc(d->active_convs_pool);
+    // Connection pool and combined trie linked list of conversations
+    d->active_pool = mem_pool_create("Statetrans TCP connections pool");
+    d->conv_tree = trie_alloc(d->active_pool);
+    d->conv_list.count = 0;
+    d->conv_list.head = d->conv_list.tail = NULL;
     
-    d->finished_convs_pool = mem_pool_create("Statetrans TCP finished conversations");
-    
-    d->last_timedout_check_ts = 0;
-    d->timeout_check_interval = 
     
     // Hardcoded
     d->consolidate_lower_treshold = 200;
     d->consolidate_treshold_portion = 0.2;
+    d->last_timedout_check_ts = 0;
+    d->timeout_check_interval = 5 * 1000 * 1000; // 5s
     
+    // Connection timeouts in secs
+    d->syn_timeout      = 120 * 1000;
+    d->estab_timeout    = 5 * 24 * 3600 * 1000;
+    d->rst_timeout      =  10 * 1000;
+    d->fin_timeout      = 120 * 1000;
+    d->last_ack_timeout =  30 * 1000;
 }
 
 static void tcp_destroy(struct statemachine_context *ctx) {
     struct statemachine_data *d = ctx->data;
     
-    mem_pool_destroy(d->active_convs_pool);
-    mem_pool_destroy(d->finished_convs_pool);
+    mem_pool_destroy(d->active_pool);
 }
 
-static void tcp_packet(struct statemachine_context *ctx, const struct packet_info *info) {
+static void tcp_packet(struct statemachine_context *ctx, const struct packet_info *pkt) {
     struct statemachine_data *d = ctx->data;
-    
     uint64_t now = info->timestamp;
-    d->finished_convs = trie_alloc(d->finished_convs_pool);
     
+    // Lookup conversation 
+    struct trie_data *conv = tcp_lookup_conv(ctx, pkt);
+    
+    
+    
+    
+    // New conversation
+    
+    
+    
+    
+    // lookup conv or 
+    
+    // check timedtou
+    
+    // add pkt to sm conv
+    
+    
+    
+    
+    
+    // filter tcp
+    
+    
+    
+    
+    
+    /*
     // Look for TCP timeouts if interval passed since last check
     if (d->last_timedout_check_ts + d->timeout_check_interval >= now) {
         tcp_lookup_timedout_convs(ctx, now);
-    }
+    } 
+     */
     
 }
 
@@ -127,25 +163,130 @@ struct statemachine_conversation *tcp_get_next_finished_conv(struct statemachine
 
 }
 
+
+static struct tcp_conv_key *tcp_get_key(struct packet_info *pkt, struct mem_pool *pool, bool reversed) {
+    size_t size = sizeof(struct tcp_conv_key) + 2 * pkt->addr_len;
+    struct tcp_conv_key *key = mem_pool_alloc(pool, size);
+    key->size = size;
+    
+    enum endpoint src_ep = reversed ? END_DST : END_SRC;
+    enum endpoint dst_ep = reversed ? END_SRC : END_DST;
+
+    key->src_port = pkt->ports[src_ep];
+    key->dst_port = pkt->ports[dst_ep];
+    
+    // Src & dst address
+    memcpy(key->addresses, pkt->addresses[src_ep], pkt->addr_len);
+    uint8_t  *dst_ip_ptr = key->addresses + pkt->addr_len;
+    
+    memcpy(dst_ip_ptr, pkt->addresses[src_ep], pkt->addr_len);
+    
+    return key;
+};
+
+
+/*
+ tcp_syn_timeout(120)
+, tcp_estab_timeout(5 * 24 * 3600) // 5 days
+, tcp_rst_timeout(10)
+, tcp_fin_timeout(120)
+, tcp_last_ack_timeout(30)
+ */
+static bool tcp_is_timedout(struct statemachine_data *d, struct trie_data *conv, uint64_t now) {
+    uint32_t timeout_sec;
+    
+    switch(conv->c.state) {
+	case TCP_SYN_RECD:
+	case TCP_ACK_WAIT:
+	case TCP_SYN_SENT:
+	    timeout_sec = d->estab_timeout;
+	    break;
+	    
+	case TCP_ESTABLISHED:
+	    timeout_sec = d->estab_timeout;
+	    break;
+	    
+	case TCP_FIN_WAIT_1:
+	case TCP_FIN_WAIT_2:
+	case TCP_CLOSING_1:
+	case TCP_CLOSING_2:
+	case TCP_CLOSING:
+	    timeout_sec = d->fin_timeout;
+	    break;
+	    
+	case TCP_CLOSE_WAIT:
+	case TCP_CLOSE_WAIT_1:
+	case TCP_LAST_ACK_1:
+	case TCP_LAST_ACK:
+	case TCP_LAST_ACK_2:
+	    timeout_sec = d->last_ack_timeout;
+	    break;
+	    
+	default:
+	    return false;
+    }
+    
+    uint64_t max_allowd_us = conv->c.last_pkt_ts + 1000000 * (uint64_t) timeout_sec;
+    return (now > max_allowd_us);
+}
+
+
+static struct trie_data *tcp_lookup_conv(struct statemachine_context *ctx, const struct packet_info *pkt) {
+    struct statemachine_data *d = ctx->data;
+    uint64_t now = info->timestamp;
+    
+    // Lookup conversation 
+    struct tcp_conv_key *key = tcp_get_key(pkt, ctx->plugin_ctx->temp_pool, false);
+    struct trie_data *conv = trie_lookup(d->conv_tree, key, key->size);
+    // Found in
+    if (conv) {
+	// Found but timed out
+	if (tcp_is_timedout(d, conv, now)) {
+	    /* Found but timed out ..How to solve this?:
+	     * 1. Leave conv untouched in linked list (will be detected on next timeout check).
+	     * 2. Add new_conv to linked list
+	     * 3. Reuse trie item pointer to point to new_conv.
+	     */
+	    conv = *trie_index(d->conv_tree, key, key->size) = conv_list_append_pool(d->conv_list, d->active_pool);
+	} 
+	// Found & not timed out
+	else {
+	    // Move conv to the end of linked list (last accessed): remove, append to tail
+	    conv_list_remove(&d->conv_list, conv);
+	    conv_list_insert_after(&d->conv_list, conv, d->conv_list.tail);
+	}
+    } 
+    // Not found in original direction, try reversed
+    else if (!conv) {
+	// Try to search for conversation in reversed direction
+	struct tcp_conv_key *r_key = tcp_get_key(pkt, ctx->plugin_ctx->temp_pool, true);
+	conv = trie_lookup(d->conv_tree, r_key, r_key->size);
+	
+	// Found reverse but timed out
+	if (conv && tcp_is_timedout(d, conv, now)) {
+	    // Leave found conv. to be timeout detected and create new conv. in original direction
+	    conv = NULL
+	}
+	
+	// If conv found, move to the end of linked list (last accessed): remove, append to tail
+	if (conv) {
+	    conv_list_remove(&d->conv_list, conv);
+	    conv_list_insert_after(&d->conv_list, conv, d->conv_list.tail);   
+	}
+    }
+    
+    // No coresponding active conversation found, create new - append to list & insert to tree
+    if (!conv) {
+	conv = *trie_index(d->conv_tree, key, key->size) = conv_list_append_pool(d->conv_list, d->active_pool);
+    }
+    
+    return conv;
+}
+
 static void tcp_clean_timedout(struct statemachine_context *ctx) {
     
 }
 
-
-struct statemachine *statemachine_info_tcp(void) {
-	static struct statemachine statemachine = {
-		.name = "TCP",
-		.transition_count = TCP_STATE_COUNT,
-
-		.init_callback = tcp_init,
-		.finish_callback = tcp_destroy,
-		.packet_callback = tcp_packet,
-		.get_next_finished_conv_callback = tcp_get_next_finished_conv,
-		.clean_timedout_convs_callback = tcp_clean_timedout
-	};
-
-	return &statemachine;
-}
 
 ///
 
@@ -175,4 +316,20 @@ static void tcp_lookup_timedout_callback(const uint8_t *key, size_t key_size, st
     struct statemachine_context *ctx;
     
     
+}
+
+
+struct statemachine *statemachine_info_tcp(void) {
+	static struct statemachine statemachine = {
+		.name = "TCP",
+		.transition_count = TCP_STATE_COUNT,
+
+		.init_callback = tcp_init,
+		.finish_callback = tcp_destroy,
+		.packet_callback = tcp_packet,
+		.get_next_finished_conv_callback = tcp_get_next_finished_conv,
+		.clean_timedout_convs_callback = tcp_clean_timedout
+	};
+
+	return &statemachine;
 }

@@ -38,7 +38,7 @@ struct engine {
 
     size_t evaluator_cnt;
     struct evaluator **evaluators;
-    struct evaluators_data **evaluators_data;
+    struct evaluator_data **evaluators_data;
 
     struct mem_pool *learn_profiles_pool;
     struct trie *learn_profiles;

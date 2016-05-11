@@ -39,15 +39,25 @@ struct statemachine_context {
         struct statemachine_data *data; // Can be changed by statemachine
 };
 
+
+struct statemachine_timeslot {
+	timeslot_value_t value;
+	timeslot_aggr_value_t aggr_value;
+	timeslot_aggr_cnt_t aggr_cnt;
+};
+
 // Generalized conversation - each statemachine can have different nu
 struct statemachine_conversation {
-    struct conversation_id *id;
+    struct conversation_id id;
     statemachine_state_t state;
+    uint64_t first_pkt_ts;
     uint64_t last_pkt_ts;
+    bool terminated;    // Finished correctly or timed out
     
-    // Flexible array member, number of elements is equal to number of timeslots
+    
+    // Number of elements is equal to number of timeslots
     //  usage: timeslots[ts][statemachine.trans_cnt]
-    statemachine_timeslot *timeslots[]; 
+    statemachine_timeslot **timeslots; 
 };
 
 // learning_profiles[host_key][evaluator][convers_index].timeslots[ts] 
@@ -75,11 +85,6 @@ struct statemachine {
 };
 
 
-struct statemachine_timeslot {
-	timeslot_value_t value;
-	timeslot_aggr_value_t aggr_value;
-	timeslot_aggr_cnt_t aggr_cnt;
-};
 
 /*
 	conversations[key<five_touple>]  // four_touple is enough
