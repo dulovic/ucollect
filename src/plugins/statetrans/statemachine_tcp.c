@@ -1,6 +1,6 @@
 /*
     Ucollect - small utility for real-time analysis of network data
-    Copyright (C) 2015 Tomas Morvay
+    Copyright (C) 2016 Tomas Morvay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,6 +20,10 @@
 #include "statemachine_tcp.h"
 
 #include "../../core/context.h"
+#include "../../core/mem_pool.h"
+#include "../../core/trie.h"
+
+#include "statemachine_tcp_conv_list.h"
 
 /*
 STATEMACHINE
@@ -55,16 +59,68 @@ STATEMACHINE
 
 ////
 
+struct statemachine_data {
+    struct mem_pool *active_convs_pool;
+    struct trie *active_convs;
+    size_t delayed_deleted_count;
+    
+    struct mem_pool *finished_convs_pool;
+    struct tcp_conv_list finished_convs;
+    
+    // How often should be tree of active conversations checked for the timed out ones
+    uint64_t timeout_check_interval; 
+    // Timestamp of last n microseconds
+    uint64_t last_timedout_check_ts; 
+    
+    size_t consolidate_lower_treshold;
+    double consolidate_treshold_portion;
+};
+
+// Trie data for active conversations
+struct trie_data {
+    struct statemachine_conversation *conv;
+};
+
+
+static void tcp_lookup_timedout_convs(struct statemachine_context *ctx, uint64_t now);
+static void tcp_lookup_timedout_callback(const uint8_t *key, size_t key_size, struct trie_data *data, void *userdata);
+
 static void tcp_init(struct statemachine_context *ctx) {
+    ctx->data = mem_pool_alloc(ctx->plugin_ctx->permanent_pool, sizeof(struct statemachine_data));
+    struct statemachine_data *d = ctx->data;
+    
+    d->active_convs_pool = mem_pool_create("Statetrans TCP active conversations");
+    d->active_convs = trie_alloc(d->active_convs_pool);
+    
+    d->finished_convs_pool = mem_pool_create("Statetrans TCP finished conversations");
+    
+    d->last_timedout_check_ts = 0;
+    d->timeout_check_interval = 
+    
+    // Hardcoded
+    d->consolidate_lower_treshold = 200;
+    d->consolidate_treshold_portion = 0.2;
     
 }
 
 static void tcp_destroy(struct statemachine_context *ctx) {
-
+    struct statemachine_data *d = ctx->data;
+    
+    mem_pool_destroy(d->active_convs_pool);
+    mem_pool_destroy(d->finished_convs_pool);
 }
 
 static void tcp_packet(struct statemachine_context *ctx, const struct packet_info *info) {
-
+    struct statemachine_data *d = ctx->data;
+    
+    uint64_t now = info->timestamp;
+    d->finished_convs = trie_alloc(d->finished_convs_pool);
+    
+    // Look for TCP timeouts if interval passed since last check
+    if (d->last_timedout_check_ts + d->timeout_check_interval >= now) {
+        tcp_lookup_timedout_convs(ctx, now);
+    }
+    
 }
 
 struct statemachine_conversation *tcp_get_next_finished_conv(struct statemachine_context *ctx) {
@@ -72,7 +128,7 @@ struct statemachine_conversation *tcp_get_next_finished_conv(struct statemachine
 }
 
 static void tcp_clean_timedout(struct statemachine_context *ctx) {
-
+    
 }
 
 
@@ -90,4 +146,33 @@ struct statemachine *statemachine_info_tcp(void) {
 
 	return &statemachine;
 }
+
 ///
+
+struct tcp_lookup_timedout_data {
+    struct statemachine_context *ctx;
+    uint64_t now;
+};
+
+static void tcp_lookup_timedout_convs(struct statemachine_context *ctx, uint64_t now) {
+    struct statemachine_data *d = ctx->data;
+    
+    // Reset list of finished conversations and its mem pool
+    d->finished_convs.count = 0;
+    d->finished_convs.head = NULL;
+    mem_pool_reset(d->finished_convs_pool);
+    
+    struct tcp_lookup_timedout_data userdata = {
+        .ctx = ctx,
+        .now = now
+    };
+    // Mark
+    trie_walk(d->active_convs, tcp_lookup_timedout_callback, &userdata, ctx->plugin_ctx->temp_pool);
+    
+}
+
+static void tcp_lookup_timedout_callback(const uint8_t *key, size_t key_size, struct trie_data *data, void *userdata) {
+    struct statemachine_context *ctx;
+    
+    
+}

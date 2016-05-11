@@ -1,6 +1,6 @@
 /*
     Ucollect - small utility for real-time analysis of network data
-    Copyright (C) 2015 Tomas Morvay
+    Copyright (C) 2016 Tomas Morvay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -367,7 +367,7 @@ static void engined_change_mode_walk_trie_cb(const uint8_t *key, size_t key_size
 
             // Evaluator-specific data for detection profile
             struct detect_profile *detection;
-            detection = (struct detect_profile *) (host_detection + en->learn_eval_profile_offsets[i_ev]);
+            detection = (struct detect_profile *) (host_detection + en->detect_eval_profile_offsets[i_ev]);
 
             
             // Restore evaluator data pointer, do the profile creation and save the pointer

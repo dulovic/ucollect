@@ -29,7 +29,6 @@ size_t conversation_addr_len(struct conversation_id *conv) {
             return 16;
             break;
     }
-    
     return 0; // Not IP or invalid value
 }
 
