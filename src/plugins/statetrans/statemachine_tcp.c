@@ -87,7 +87,7 @@ bool tcp_is_timedout(struct statemachine_data *d, struct trie_data *conv, uint64
 struct trie_data *tcp_lookup_conv(struct statemachine_context *ctx, const struct packet_info *pkt);
 void tcp_init_conv(struct statemachine_context *ctx, struct trie_data *conv, struct mem_pool *pool);
 enum statemachine_tcp_transition tcp_track_state(struct trie_data *conv, const struct packet_info *pkt);
-void tcp_add_pkt_to_conv(struct trie_data *conv, const struct packet_info *pkt);
+void tcp_add_pkt_to_conv(struct statemachine_context *ctx, struct trie_data *conv, const struct packet_info *pkt);
 void tcp_lookup_timedout_convs(struct statemachine_context *ctx, uint64_t now);
 void tcp_lookup_timedout_callback(const uint8_t *key, size_t key_size, struct trie_data *data, void *userdata);
 
@@ -138,7 +138,7 @@ static void tcp_packet(struct statemachine_context *ctx, const struct packet_inf
 	// Lookup conversation 
 	struct trie_data *conv = tcp_lookup_conv(ctx, pkt);
 
-	tcp_add_pkt_to_conv(conv, pkt);
+	tcp_add_pkt_to_conv(ctx, conv, pkt);
 	// New conversation
 
 
@@ -300,6 +300,11 @@ static void tcp_init_conv(struct statemachine_context *ctx, struct trie_data *co
 		conv->c.timeslots[i] = mem_pool_alloc(mem_pool, size);
 		memset(conv->c.timeslots[i], 0, size);
 	}
+	
+	// Timeslot start timestamps
+	size_t size = ctx->timeslot_cnt * sizeof (uint64_t);
+	conv->c.timeslot_starts = mem_pool_alloc(mem_pool, size);
+	memset(conv->c.timeslot_starts, 0, size);
 }
 
 // TODO: implement loop transitions (#ifdef STATETRANS_TCP_LOOP_TRANSITIONS)
@@ -523,10 +528,6 @@ static enum statemachine_tcp_transition tcp_track_state(struct trie_data *conv, 
 		}
 	}
 
-
-
-
-
 	conv.c->state = new_state;
 	return transition;
 
@@ -551,13 +552,34 @@ static enum statemachine_tcp_transition tcp_track_state(struct trie_data *conv, 
 |		|		conv.timeslots[ts].value[transition]++;
  
  */
-static void tcp_add_pkt_to_conv(struct trie_data *conv, const struct packet_info *pkt) {
-
-
-
-
-
-	//transition = track_state(conv, pkt);
+static void tcp_add_pkt_to_conv(struct statemachine_context *ctx, struct trie_data *conv, const struct packet_info *pkt) {
+	conv->c.last_pkt_ts = pkt->timestamp;
+	
+	// Process only first fragments in IP datagrams
+	if (pkt->frag_off)
+		return;
+	
+	enum statemachine_tcp_transition transition;
+	transition = tcp_track_state(conv, pkt);
+	if (transition == TCP_NO_TRANS)
+		return;	// No transition detected
+	
+	
+	int i_ts;
+	for (i_ts = 0; i_ts < ctx->timeslot_cnt; i_ts++) {
+		// TODO:
+		if (!is_in_timeslot(&conv.timeslots[ts] ...)) {
+			/*
+			 * 1. sumup
+			 * 2. reset_vals
+			 */
+		}
+		
+		conv->c.timeslots[i_ts][transition]++;
+			
+	}
+	
+	
 }
 
 static void tcp_clean_timedout(struct statemachine_context *ctx) {

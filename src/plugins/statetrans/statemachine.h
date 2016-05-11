@@ -58,6 +58,8 @@ struct statemachine_conversation {
     // Number of elements is equal to number of timeslots
     //  usage: timeslots[ts][statemachine.trans_cnt]
     statemachine_timeslot **timeslots; 
+    // timeslot_start[ts]
+    uint64_t *timeslot_starts;
 };
 
 // learning_profiles[host_key][evaluator][convers_index].timeslots[ts] 
