@@ -1,4 +1,4 @@
-LIBRARIES += src/plugins/tukabel/libplugin_statetrans
-libplugin_tukabel_MODULES := statetrans
+LIBRARIES += src/plugins/statetrans/libplugin_statetrans
+libplugin_statetrans_MODULES := statetrans engine statemachine_tcp evaluator_chebyshev conversation packet_buffer
 
 DOCS += src/plugins/statetrans

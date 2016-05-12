@@ -17,25 +17,26 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
-#ifndef UCOLLECT_STATETRANS_ENGINE_H
-#define UCOLLECT_STATETRANS_ENGINE_H
 
-#include "statemachine.h"
-#include "evaluator.h"
+#ifndef UCOLLECT_STATETRANS_PACKET_BUFFER_H
+#define UCOLLECT_STATETRANS_PACKET_BUFFER_H
 
-enum detection_mode {
-    LEARNING,
-    DETECTION
-};
+#include "../../core/mem_pool.h"
+#include "../../core/packet.h"
 
-struct engine;
+/*
+	Used to buffer deep copies of last packets to eliminate problem with
+	order of packet caused by asynchronous pcap id two directions.
+ */
 
-struct engine *engine_create(struct context *ctx, timeslot_interval_t *timeslots, size_t timeslot_cnt, double threshold, const char *logfile);
 
-void engine_handle_packet(struct engine *en, struct context *ctx, const struct packet_info *pkt);
+struct packet_buffer;
 
-void engine_change_mode(struct engine *en, struct context *ctx, enum detection_mode mode);
+struct packet_buffer *packet_buffer_create(struct mem_pool *pool, size_t size);
 
-void engine_destroy(struct engine *en, struct context *ctx);
+// Adds pkt to buffer (deep copy is created) and returns the oldes pkt only if the buffer is full
+struct packet_info *packet_buffer_add(struct packet_buffer *pb, const struct packet_info *pkt);
 
-#endif
+
+#endif /* UCOLLECT_STATETRANS_PACKET_BUFFER_H */
+

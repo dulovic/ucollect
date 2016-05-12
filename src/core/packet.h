@@ -133,6 +133,8 @@ struct packet_info {
 	uint8_t tcp_flags;
 	// If non-zero, it holds the IEEE 802.1Q VLAN tag. The AD tags are not preserved here.
 	uint16_t vlan_tag;
+        // Fragment offset as in struct iphdr (including flags)
+        uint16_t frag_off;
 };
 
 /*

@@ -57,6 +57,7 @@ struct tcp_ports {
 static void parse_internal(struct packet_info *packet, struct mem_pool *pool) {
 	ulog(LLOG_DEBUG_VERBOSE, "Parse IP packet\n");
 	packet->app_protocol_raw = 0xff;
+	packet->frag_off = 0;
 	/*
 	 * Try to put the packet into the form for an IP packet. We're lucky, the version field
 	 * is on the same place for v6 as for v4, so it works.
@@ -78,6 +79,7 @@ static void parse_internal(struct packet_info *packet, struct mem_pool *pool) {
 			// Temporary length, for further parsing (IP only).
 			packet->hdr_length = HEADER_SIZE_UNIT * iphdr->ihl;
 			packet->app_protocol_raw = iphdr->protocol;
+			packet->frag_off = ntohs(iphdr->frag_off);
 			break;
 		case 6: {
 			// It's an IPv6 packet, put it into a v6 form instead.

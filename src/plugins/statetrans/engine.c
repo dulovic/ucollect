@@ -23,359 +23,484 @@
 #include "../../core/context.h"
 #include "../../core/trie.h"
 #include "../../core/packet.h"
+#include "../../core/util.h"
 
+#include "conversation.h"
+#include "statemachine_tcp.h"
+#include "evaluator_chebyshev.h"
+
+#include <string.h>
 #include <assert.h>
+#include <stdio.h>
+#include <time.h>
+#include <inttypes.h>
 
 struct engine {
-    enum detection_mode mode;
+	enum detection_mode mode;
 
-    timeslot_interval_t *timeslots;
-    size_t timeslot_cnt;
+	timeslot_interval_t *timeslots;
+	size_t timeslot_cnt;
 
-    size_t statemachine_cnt;
-    struct statemachine **statemachines;
-    struct statemachine_data **statemachines_data;
+	size_t statemachine_cnt;
+	struct statemachine **statemachines;
+	struct statemachine_data **statemachines_data;
 
-    size_t evaluator_cnt;
-    struct evaluator **evaluators;
-    struct evaluator_data **evaluators_data;
+	size_t evaluator_cnt;
+	struct evaluator **evaluators;
+	struct evaluator_data **evaluators_data;
 
-    struct mem_pool *learn_profiles_pool;
-    struct trie *learn_profiles;
-    size_t learn_host_profile_size;      // Size for one host 
-    size_t *learn_eval_profile_offsets;  // For each host large block of data is allocated. Evaluator specific data begins at given offset for each evaluator
+	struct mem_pool *learn_profiles_pool;
+	struct trie *learn_profiles;
+	size_t learn_host_profile_size; // Size for one host 
+	size_t *learn_eval_profile_offsets; // For each host large block of data is allocated. Evaluator specific data begins at given offset for each evaluator
 
-    struct mem_pool *detect_profiles_pool;
-    struct trie *detect_profiles;
-    size_t detect_host_profile_size;     // Size for one host 
-    size_t *detect_eval_profile_offsets; // For each host large block of data is allocated. Evaluator specific data begins at given offset for each evaluator
+	struct mem_pool *detect_profiles_pool;
+	struct trie *detect_profiles;
+	size_t detect_host_profile_size; // Size for one host 
+	size_t *detect_eval_profile_offsets; // For each host large block of data is allocated. Evaluator specific data begins at given offset for each evaluator
 
-    struct context *plugin_ctx;     // For internal purposes, should not be changed outside engine
+	struct context *plugin_ctx; // For internal purposes, should not be changed outside engine
+	
+	double threshold;
+	
+	FILE *logfile;
 };
 
 struct trie_data {
-    int dummy; // Just to prevent warning about empty struct
+	int dummy; // Just to prevent warning about empty struct
 };
 
+////////////////////////////////////////////////////////////////////////////////
+
 // Prototypes
-void engine_alloc_profiles(struct engine *engine);
-void engine_alloc_profiles(struct engine *en);
-void engine_init_statemachines(struct engine *e);
-void engine_init_evaluators(struct engine *e);
-uint8_t *engine_lookup_get_host_key(const struct packet_info *packet, size_t *key_size);
-uint8_t *engine_get_host_profile(struct engine *en, enum  uint8_t *host_key, size_t host_key_size, enum detection_mode mode);
-double engine_process_finished_conv(struct engine *en, struct evaluator_context ev_ctx, const uint8_t *host_profile, const struct statemachine_conversation *conv);
-void engine_change_mode(struct engine *en, struct context *ctx, enum detection_mode mode);
-void engined_change_mode_walk_trie_cb(const uint8_t *key, size_t key_size, struct trie_data *data, void *userdata);
+static void engine_print_init_info(struct context *ctx, timeslot_interval_t *timeslots, size_t timeslot_cnt, double threshold, const char *logfile);
+static void engine_alloc_profiles(struct engine *en);
+static void engine_init_statemachines(struct engine *e);
+static void engine_init_evaluators(struct engine *e);
+static uint8_t *engine_get_host_profile(struct engine *en, const uint8_t *host_key, size_t host_key_size, enum detection_mode mode);
+static double engine_process_finished_conv(struct engine *en, struct evaluator_context *ev_ctx, const uint8_t *host_profile, const struct statemachine_conversation *conv, struct anomaly_location *anom_loc);
+static void engined_change_mode_walk_trie_cb(const uint8_t *key, size_t key_size, struct trie_data *data, void *userdata);
+static void engine_log(struct engine *en, const char *level, const char *msg);
 
+////////////////////////////////////////////////////////////////////////////////
 
-struct engine *engine_create(struct context *ctx, timeslot_interval_t *timeslots, size_t timeslot_cnt) {
-    struct engine *en;
-    en = mem_pool_alloc(ctx->permanent_pool, sizeof (struct engine*));
-    en->mode = LEARNING;
-    en->plugin_ctx = ctx;   // This will be updated on each call
+struct engine *engine_create(struct context *ctx, timeslot_interval_t *timeslots, size_t timeslot_cnt, double threshold, const char *logfile) {
+	engine_print_init_info(ctx, timeslots, timeslot_cnt, threshold, logfile);
+	
+	struct engine *en;
+	en = mem_pool_alloc(ctx->permanent_pool, sizeof (struct engine));
+	en->mode = LEARNING;
+	en->plugin_ctx = ctx; // This will be updated on each call
+	
+	en->threshold = threshold;
 
-    // Copy timeslot intervals
-    en->timeslot_cnt = timeslot_cnt;
-    size_t timeslots_size = timeslot_cnt * sizeof (timeslot_interval_t);
-    en->timeslots = mem_pool_alloc(ctx->permanent_pool, timeslots_size);
-    memcpy(en->timeslots, timeslots, timeslots_size);
+	// Copy timeslot intervals
+	en->timeslot_cnt = timeslot_cnt;
+	size_t timeslots_size = timeslot_cnt * sizeof (timeslot_interval_t);
+	en->timeslots = mem_pool_alloc(ctx->permanent_pool, timeslots_size);
+	memcpy(en->timeslots, timeslots, timeslots_size);
 
-    // Get info about statemachines
-    en->statemachine_cnt = 1;
-    en->statemachines = mem_pool_alloc(ctx->permanent_pool, en->statemachine_cnt * sizeof (struct statemachine*));
-    en->statemachines[0] = statemachine_info_tcp();`
+	// Get info about statemachines
+	en->statemachine_cnt = 1;
+	en->statemachines = mem_pool_alloc(ctx->permanent_pool, en->statemachine_cnt * sizeof (struct statemachine*));
+	en->statemachines[0] = statemachine_info_tcp();
 
-    // Get info about evaluators
-    en->evaluator_cnt = 1;
-    en->evaluators = mem_pool_alloc(ctx->permanent_pool, en->evaluator_cnt * sizeof (struct evaluator*));
-    en->evaluators[0] = evaluator_info_chebyshev();
+	// Get info about evaluators
+	en->evaluator_cnt = 1;
+	en->evaluators = mem_pool_alloc(ctx->permanent_pool, en->evaluator_cnt * sizeof (struct evaluator*));
+	en->evaluators[0] = evaluator_info_chebyshev();
 
-    // Create tres for learning & detection profiles per host
-    engine_alloc_profiles(en);
+	// Create tries for learning & detection profiles per host
+	engine_alloc_profiles(en);
 
-    engine_init_statemachines(en);
-    engine_init_evaluators(en);
+	engine_init_statemachines(en);
+	engine_init_evaluators(en);
+	
+	en->logfile = fopen(logfile, "w");
 
-    return en;
+	ulog(LLOG_DEBUG, "Statetrans engine: init done\n");
+	
+	return en;
 }
 
-void engine_handle_packet(struct engine *en, struct context *ctx, const struct packet_info *packet) {
-    assert(en->mode == LEARNING || en->mode == DETECTION);
-    en->plugin_ctx = ctx;   // This will be updated on each call
-    
-    // Prepare statemachine context
-    struct statemachine_context sm_ctx = {
-        .plugin_ctx = ctx,
-        .timeslots = en->timeslots,
-        .timeslot_cnt = en->timeslot_cnt
-    };
+void engine_handle_packet(struct engine *en, struct context *ctx, const struct packet_info *pkt) {
+	assert(en->mode == LEARNING || en->mode == DETECTION);
 
-    // Prepare evaluator context
-    struct evaluator_context ev_ctx = {
-        .plugin_ctx = ctx,
-        .timeslots = en->timeslots,
-        .timeslot_cnt = en->timeslot_cnt,
-        //.transition_count = 0		// Will be set per statemachine
-        //.statmachine_index = 0        // Per statemachin
-    };
+	char *fourtuple = packet_format_4tuple(ctx->temp_pool, pkt, " ==> ");
+	char *layers = packet_format_layer_info(ctx->temp_pool, pkt, " -> ");
+	ulog(LLOG_DEBUG, "Statetrans engine: got packet[%s] %s\n", layers, fourtuple);
 
-    //Get host key
-    size_t host_key_size;
-    uint8_t *host_key;
-    
-    host_key = engine_lookup_get_host_key(packet, &host_key_size);
+	en->plugin_ctx = ctx; // Updated on each call
+	uint64_t now = pkt->timestamp;
+	
+	// Prepare statemachine context
+	struct statemachine_context sm_ctx = {
+		.plugin_ctx = ctx,
+		.timeslots = en->timeslots,
+		.timeslot_cnt = en->timeslot_cnt
+	};
 
-    // Load (learning or detection) host profile 
-    uint8_t *host_profile = engine_get_host_profile(en, host_key, host_key_size, en->mode);
-    
+	// Prepare evaluator context
+	struct evaluator_context ev_ctx = {
+		.plugin_ctx = ctx,
+		.timeslots = en->timeslots,
+		.timeslot_cnt = en->timeslot_cnt,
+		//.transition_count = 0		// Will be set per statemachine
+		//.statemachine_index = 0	// Per statemachine
+	};
 
-    // Pass packet to each statemachine & process new finished conversations reported by statemachine
-    size_t i_sm; // Statemachine index
-    for (i_sm = 0; i_sm < en->statemachine_cnt; i_sm++) {
-        struct statemachine *sm = en->statemachines[i_sm];
-        
-        sm_ctx.data = en->statemachines_data[i_sm]; // Restore pointer to statemachine data
-        sm->packet_callback(&sm_ctx, packet);
+	// Pass packet to each statemachine & process new finished conversations reported by statemachine
+	size_t i_sm; // Statemachine index
+	for (i_sm = 0; i_sm < en->statemachine_cnt; i_sm++) {
+		struct statemachine *sm = en->statemachines[i_sm];
+		
+		ulog(LLOG_DEBUG, "Statetrans engine: passing packet to statemachine '%s'\n", sm->name);
 
-        // Modify evaluator context according to current statemachine
-        ev_ctx.statmachine_index = i_sm;
-        ev_ctx.transition_count = sm->transition_count;
+		sm_ctx.data = en->statemachines_data[i_sm]; // Restore pointer to statemachine data
+		if (sm->packet_callback)
+			sm->packet_callback(&sm_ctx, pkt);
 
-        // Process finished (closed, timedout, ..) conversations from statemachine
-        struct statemachine_conversation *conv;
-        while (conv = sm->get_next_finished_conv_callback(&sm_ctx)) {
-            engine_process_finished_conv(en, ev_ctx, host_profile, conv);
-        }
-        en->statemachines_data[i_sm] = sm_ctx.data; // Save pointer to statemachine data
-    }
+		// Modify evaluator context according to current statemachine
+		ev_ctx.statemachine_index = i_sm;
+		ev_ctx.transition_cnt = sm->transition_count;
 
+		// Process finished (closed, timedout, ..) conversations from statemachine
+		struct statemachine_conversation *conv;
+		while ((conv = sm->get_next_finished_conv_callback(&sm_ctx, now))) {
+			char *fourtuple = conversation_id_format_4tuple(ctx->temp_pool, &conv->id, " -> ");
+			ulog(LLOG_DEBUG, "Statetrans engine: got finished conversation %s\n", fourtuple);
+			
+			//Get host key (local MAC address)
+			uint8_t *host_key = conv->id.profile_key;
+			size_t host_key_size = conv->id.profile_key_len;
+
+			// Get (learning or detection) host profile 
+			uint8_t *host_profile = engine_get_host_profile(en, host_key, host_key_size, en->mode);
+			
+			char *mac_str = format_mac(ctx->temp_pool,host_key);
+			ulog(LLOG_DEBUG, "Statetrans engine: using host_profile[%s] = %p\n", mac_str, host_profile);
+
+			struct anomaly_location anom_loc;
+			double score = engine_process_finished_conv(en, &ev_ctx, host_profile, conv, &anom_loc);
+
+			ulog(LLOG_INFO, "Statetrans engine: Anomaly score = %.2lf for conv [%s]\n", score, fourtuple);
+			
+			if (score >= en->threshold) {
+				char *msg = mem_pool_printf(ctx->temp_pool, "score(%.2lf) [%s] timeslot=%zums transition=%zu", 
+					score, 
+					fourtuple, 
+					(size_t) en->timeslots[anom_loc.timeslot], 
+					anom_loc.transition	// TODO: print str
+				);
+				ulog(LLOG_WARN, "Statetrans engine: [ANOMALY] %s\n", msg);
+				
+				// Log to file
+				engine_log(en, "ANOMALY", msg);
+			} else {
+				char *msg = mem_pool_printf(ctx->temp_pool, "score(%.2lf) [%s]", score, fourtuple);
+				engine_log(en, "INFO", msg);
+			}
+
+
+		}
+
+		// Perform statemachine-level cleanup
+		sm->clean_timedout_convs_callback(&sm_ctx, pkt->timestamp);
+
+		// Save pointer to statemachine data
+		en->statemachines_data[i_sm] = sm_ctx.data;
+	}
+	ulog(LLOG_DEBUG, "Statetrans engine: packet processing finished\n");
 }
 
 void engine_change_mode(struct engine *en, struct context *ctx, enum detection_mode mode) {
-    char *old_s = (en->mode == LEARNING) ? "LEARNING" : "DETECTION";
-    char *new_s = (mode == LEARNING) ? "LEARNING" : "DETECTION";
+	en->plugin_ctx = ctx;
 
-    ulog(LLOG_WARN, "Statetrans engine: Changing mode (%s -> %s)", old_s, new_s);
-    
-    if (en->mode != LEARNING || mode != DETECTION) {
-        ulog(LLOG_WARN, "Statetrans engine: Unsupported mode change (%d -> %d)", en->mode, mode);
-        return;
-    }
+	char *old_s = (en->mode == LEARNING) ? "LEARNING" : "DETECTION";
+	char *new_s = (mode == LEARNING) ? "LEARNING" : "DETECTION";
 
-    // Clear detection profiles trie
-    mem_pool_reset(en->detect_profiles_pool);
-    en->detect_profiles = trie_alloc(en->detect_profiles_pool);
+	ulog(LLOG_DEBUG, "Statetrans engine: Changing mode (%s -> %s)\n", old_s, new_s);
 
-    trie_walk(en->learn_profiles, engined_change_mode_walk_trie_cb, en, ctx->temp_pool);
-    en->mode = mode;
+	if (en->mode != LEARNING || mode != DETECTION) {
+		ulog(LLOG_INFO, "Statetrans engine: Unsupported mode change (%d -> %d)\n", en->mode, mode);
+		return;
+	}
+	
+	char *msg = mem_pool_printf(en->plugin_ctx->temp_pool, "Switching mode (%s -> %s)\n", old_s, new_s);
+	engine_log(en, "INFO", msg);
+
+	// Clear detection profiles trie
+	mem_pool_reset(en->detect_profiles_pool);
+	en->detect_profiles = trie_alloc(en->detect_profiles_pool);
+
+	trie_walk(en->learn_profiles, engined_change_mode_walk_trie_cb, en, ctx->temp_pool);
+	en->mode = mode;
+	
+	ulog(LLOG_INFO, "Statetrans engine: Mode change finished (%s -> %s)\n", old_s, new_s);
 }
 
-void engine_destroy(struct engine *en, struct context *ctx) {
-
-
+void engine_destroy(struct engine *en __attribute__((unused)), struct context *ctx __attribute__((unused))) {
+	ulog(LLOG_INFO, "Statetrans engine: Destroy called\n");
+	fclose(en->logfile);
+	
+	// TODO:
+	// Here we should call destroy for all statemachines & evaluators
+	// For now we assume that the whole plugin/ucollect is going to be destroyed
 }
 
+////////////////////////////////////////////////////////////////////////////////
 
 static void engine_alloc_profiles(struct engine *en) {
-    en->learn_profiles_pool = mem_pool_create("Statetrans learning profiles");
-    en->learn_profiles = trie_alloc(en->learn_profiles_pool);
+	ulog(LLOG_INFO, "Statetrans engine: allocating memory for host profiles\n");
+	
+	en->learn_profiles_pool = mem_pool_create("Statetrans learning profiles");
+	en->learn_profiles = trie_alloc(en->learn_profiles_pool);
 
-    en->detect_profiles_pool = mem_pool_create("Statetrans detection profiles");
-    en->detect_profiles = trie_alloc(en->detect_profiles_pool);
+	en->detect_profiles_pool = mem_pool_create("Statetrans detection profiles");
+	en->detect_profiles = trie_alloc(en->detect_profiles_pool);
 }
 
 static void engine_init_statemachines(struct engine *en) {
-    // Alloc storage for pointers to statemachine data
-    en->statemachines_data = mem_pool_alloc(en->plugin_ctx->permanent_pool, en->statemachine_cnt * sizeof(struct statemachine_data *));
-    
-    struct statemachine_context sm_ctx = {
-        .plugin_ctx = en->plugin_ctx,
-        .timeslots = en->timeslots,
-        .timeslot_cnt = en->timeslot_cnt
-    };
+	// Alloc storage for pointers to statemachine data
+	en->statemachines_data = mem_pool_alloc(en->plugin_ctx->permanent_pool, en->statemachine_cnt * sizeof (struct statemachine_data *));
 
-    size_t i_sm;
-    for (i_sm = 0; i_sm < en->statemachine_cnt; i_sm++) {
-        ulog(LLOG_DEBUG, "Statetrans engine: Initializing statemachine '%s'\n", en->statemachines[i_sm]->name);
-        
-        // Initialize statemachine data
-        en->statemachines_data[i_sm] = NULL;
-        sm_ctx.data = en->statemachines_data[i_sm];
-        
-        // Initialize statemachine
-        en->statemachines[i_sm]->init_callback(sm_ctx);
-        
-        // Save statemachine data
-        en->statemachines_data[i_sm] = sm_ctx.data;
-        
-    }
+	struct statemachine_context sm_ctx = {
+		.plugin_ctx = en->plugin_ctx,
+		.timeslots = en->timeslots,
+		.timeslot_cnt = en->timeslot_cnt
+	};
+
+	size_t i_sm;
+	for (i_sm = 0; i_sm < en->statemachine_cnt; i_sm++) {
+		ulog(LLOG_INFO, "Statetrans engine: Initializing statemachine '%s'\n", en->statemachines[i_sm]->name);
+		if (!en->statemachines[i_sm]->init_callback)
+			continue;
+
+		// Initialize statemachine data
+		en->statemachines_data[i_sm] = NULL;
+		sm_ctx.data = en->statemachines_data[i_sm];
+
+		// Initialize statemachine
+		en->statemachines[i_sm]->init_callback(&sm_ctx);
+
+		// Save statemachine data
+		en->statemachines_data[i_sm] = sm_ctx.data;
+
+	}
 }
 
 static void engine_init_evaluators(struct engine *en) {
-    // Alloc storage for pointers to statemachine data
-    en->evaluators_data = mem_pool_alloc(en->plugin_ctx->permanent_pool, en->evaluator_cnt * sizeof(struct evaluators_data *));
-    
-    struct evaluator_context ev_ctx = {
-        .plugin_ctx = en->plugin_ctx,
-        .timeslots = en->timeslots,
-        .timeslot_cnt = en->timeslot_cnt,
-        .transition_count = 0,
-        .statmachine_index = en->statemachine_cnt // Pass total number of statemachines
-    };
+	// Alloc storage for pointers to statemachine data
+	en->evaluators_data = mem_pool_alloc(en->plugin_ctx->permanent_pool, en->evaluator_cnt * sizeof (struct evaluator_data *));
 
-    // Offsets for each evaluator within host profile
-    en->learn_eval_profile_offsets = mem_pool_alloc(en->plugin_ctx->permanent_pool, en->evaluator_cnt * sizeof (size_t));
-    en->detect_eval_profile_offsets = mem_pool_alloc(en->plugin_ctx->permanent_pool, en->evaluator_cnt * sizeof (size_t));
+	struct evaluator_context ev_ctx = {
+		.plugin_ctx = en->plugin_ctx,
+		.timeslots = en->timeslots,
+		.timeslot_cnt = en->timeslot_cnt,
+		.transition_cnt = 0,
+		.statemachine_index = en->statemachine_cnt // Pass total number of statemachines
+	};
 
-    // Profile size per host
-    en->learn_host_profile_size = 0;
-    en->detect_host_profile_size = 0;
+	// Offsets for each evaluator within host profile
+	en->learn_eval_profile_offsets = mem_pool_alloc(en->plugin_ctx->permanent_pool, en->evaluator_cnt * sizeof (size_t));
+	en->detect_eval_profile_offsets = mem_pool_alloc(en->plugin_ctx->permanent_pool, en->evaluator_cnt * sizeof (size_t));
 
-    size_t i_ev;
-    for (i_ev = 0; i_ev < en->evaluator_cnt; i_ev++) {
-        ulog(LLOG_DEBUG, "Statetrans engine: Initializing evaluator '%s'\n", en->evaluators[i_ev]->name);
-        
-        // Initialize evaluator data pointe & call evaluator initializer
-        en->evaluators_data[i_ev] = NULL;
-        ev_ctx.data = en->evaluators_data[i_ev];
-        en->evaluators[i_ev]->init_callback(ev_ctx);
-        en->evaluators_data[i_ev] = ev_ctx.data;
+	// Profile size per host
+	en->learn_host_profile_size = 0;
+	en->detect_host_profile_size = 0;
 
-        // Remember evaluator offset in common profile data block for one host
-        en->learn_eval_profile_offsets[i_ev] = en->learn_host_profile_size;
-        en->detect_eval_profile_offsets[i_ev] = en->detect_host_profile_size;
+	size_t i_ev;
+	for (i_ev = 0; i_ev < en->evaluator_cnt; i_ev++) {
+		ulog(LLOG_INFO, "Statetrans engine: Initializing evaluator '%s'\n", en->evaluators[i_ev]->name);
 
-        // Memory occupied by one host from viewpoint of engine
-        en->learn_host_profile_size += en->evaluators[i_ev]->learn_profile_size;
-        en->detect_host_profile_size += en->evaluators[i_ev]->detect_profile_size;
-    }
-    ulog(LLOG_DEBUG, "Statetrans engine: Learning profile size per host '%d'\n", en->learn_host_profile_size);
-    ulog(LLOG_DEBUG, "Statetrans engine: Detection profile size per host '%d'\n", en->detect_host_profile_size);
+		if (!en->evaluators[i_ev]->init_callback)\
+		continue;
+
+		// Initialize evaluator data pointe & call evaluator initializer
+		en->evaluators_data[i_ev] = NULL;
+		ev_ctx.data = en->evaluators_data[i_ev];
+		en->evaluators[i_ev]->init_callback(&ev_ctx);
+		en->evaluators_data[i_ev] = ev_ctx.data;
+
+		// Remember evaluator offset in common profile data block for one host
+		en->learn_eval_profile_offsets[i_ev] = en->learn_host_profile_size;
+		en->detect_eval_profile_offsets[i_ev] = en->detect_host_profile_size;
+
+		// Memory occupied by one host from viewpoint of engine
+		en->learn_host_profile_size += en->evaluators[i_ev]->learn_profile_size;
+		en->detect_host_profile_size += en->evaluators[i_ev]->detect_profile_size;
+	}
+	ulog(LLOG_INFO, "Statetrans engine: Learning profile size per host '%zd'\n", en->learn_host_profile_size);
+	ulog(LLOG_INFO, "Statetrans engine: Detection profile size per host '%zd'\n", en->detect_host_profile_size);
 }
 
-static uint8_t *engine_lookup_get_host_key(const struct packet_info *packet, size_t *key_size) {
+static uint8_t *engine_get_host_profile(struct engine *en, const uint8_t *host_key, size_t host_key_size, enum detection_mode mode) {
+	struct trie *profiles_trie;
+	struct trie_data **data;
 
-    // Host key = local MAC address
-    if (packet->layer != 'E')
-        return; // Can't obtain host key
-    enum endpoint local_ep = local_endpoint(packet->direction);
-    *key = packet->addresses[local_ep];
-    *key_size = packet->addr_len;
-}
+	// Find or add to correct trie according to mode
+	profiles_trie = (mode == LEARNING) ? en->learn_profiles : en->detect_profiles;
+	data = trie_index(profiles_trie, host_key, host_key_size);
 
-static uint8_t *engine_get_host_profile(struct engine *en, enum  uint8_t *host_key, size_t host_key_size, enum detection_mode mode) {
-    struct trie *profiles_trie;
-    struct trie_data **data;
-    
-    // Find or add to correct trie according to mode
-    profiles_trie = (mode == LEARNING) ? en->learn_profiles : en->detect_profiles;
-    data = trie_index(profiles_trie, host_key, host_key_size);
-        
-    // Host seen first time - alloc profile & initialize to zeros
-    if (*data == NULL) {
-        if (mode == LEARNING) {
-            *data = mem_pool_alloc(en->learn_profiles_pool, en->);
-            memset(*data, 0, en->learn_host_profile_size);
-        } else { // DETECTION
-            *data = mem_pool_alloc(en->detect_profiles_pool, en->);
-            memset(*data, 0, en->detect_host_profile_size);
-        }
-    }
-    
-    return (uint8_t *)*data;
+	// Host seen first time - alloc profile & initialize to zeros
+	if (*data == NULL) {
+		if (mode == LEARNING) {
+			*data = mem_pool_alloc(en->learn_profiles_pool, en->learn_host_profile_size);
+			memset(*data, 0, en->learn_host_profile_size);
+		} else { // DETECTION
+			*data = mem_pool_alloc(en->detect_profiles_pool, en->detect_host_profile_size);
+			memset(*data, 0, en->detect_host_profile_size);
+		}
+	}
+
+	return (uint8_t *)*data;
 }
 
 // Pass conversation to all evaluators and return max anomaly score (in learning mode always 0.0)
-static double engine_process_finished_conv(struct engine *en, struct evaluator_context ev_ctx, const uint8_t *host_profile, const struct statemachine_conversation *conv) {
-    int i_ev;
-    double max_score = 0.0L;
 
-    // Choose evaluator callback according to mode
-    if (en->mode == LEARNING) {
-        // Pass next finished conversation to all evaluators
-        for (i_ev = 0; i_ev < en->evaluator_cnt; i_ev++) {
-            struct evaluator *ev = en->evaluators[i_ev];
-            
-            // Evaluator-specific data in learning profile
-            struct learn_profile *learning;
-            learning = (struct learn_profile *) (host_profile + en->learn_eval_profile_offsets[i_ev]);
+static double engine_process_finished_conv(struct engine *en, struct evaluator_context *ev_ctx, const uint8_t *host_profile, const struct statemachine_conversation *conv, struct anomaly_location *anom_loc) {
+	size_t i_ev;
+	double max_score = 0.0L;
 
-            // Restore evaluator data pointer, do the learning and save the pointer
-            ev_ctx.data = en->evaluators_data[i_ev]; 
-            ev->learn_callback(ev_ctx, learning, conv);
-            en->evaluators_data[i_ev] = ev_ctx.data;
-        }
-        // max_score unchanged - not detecting
-        
-    } else { // if (en->mode == DETECTION) 
-        
-        // Pass next finished conversation to all evaluators
-        for (i_ev = 0; i_ev < en->evaluator_cnt; i_ev++) {
-            struct evaluator *ev = en->evaluators[i_ev];
-            
-            // Evaluator-specific data in detection profile
-            struct detect_profile *detection;
-            detection = (struct detect_profile *) (host_profile + en->detect_eval_profile_offsets[i_ev]);
+	// Choose evaluator callback according to mode
+	if (en->mode == LEARNING) {
+		// Pass next finished conversation to all evaluators
+		for (i_ev = 0; i_ev < en->evaluator_cnt; i_ev++) {
+			struct evaluator *ev = en->evaluators[i_ev];
 
-            
-            // Restore evaluator data pointer, do the detection and save the pointer
-            ev_ctx.data = en->evaluators_data[i_ev]; 
-            double score = ev->detect_callback(ev_ctx, detection, conv);
-            en->evaluators_data[i_ev] = ev_ctx.data;
-            
-            if (score > max_score)
-                max_score = score;  // TODO: remember evaluator index?
-        }
-        ulog(LLOG_INFO, "Statetrans engine: Anomaly score = %.2lf", max_score);
-    }
+			ulog(LLOG_DEBUG, "Statetrans engine: Running LEARNING for evaluator '%s'\n", ev->name);
+			
+			// Evaluator-specific data in learning profile
+			struct learn_profile *learning;
+			learning = (struct learn_profile *) (host_profile + en->learn_eval_profile_offsets[i_ev]);
 
-    return max_score;
+			// Restore evaluator data pointer, do the learning and save the pointer
+			ev_ctx->data = en->evaluators_data[i_ev];
+			ev->learn_callback(ev_ctx, learning, conv);
+			en->evaluators_data[i_ev] = ev_ctx->data;
+		}
+
+		// max_score 0.0 - not detecting
+		max_score = 0.0L;
+		anom_loc->timeslot = 0;
+		anom_loc->transition = 0;
+
+	} else { // if (en->mode == DETECTION) 
+		// Default values
+		anom_loc->timeslot = 0;
+		anom_loc->transition = 0;
+
+		// Pass next finished conversation to all evaluators
+		for (i_ev = 0; i_ev < en->evaluator_cnt; i_ev++) {
+			struct evaluator *ev = en->evaluators[i_ev];
+
+			ulog(LLOG_DEBUG, "Statetrans engine: Running DETECTION for evaluator '%s'\n", ev->name);
+			
+			// Evaluator-specific data in detection profile
+			struct detect_profile *detection;
+			detection = (struct detect_profile *) (host_profile + en->detect_eval_profile_offsets[i_ev]);
+
+			struct anomaly_location cur_anom_loc;
+
+			// Restore evaluator data pointer, do the detection and save the pointer
+			ev_ctx->data = en->evaluators_data[i_ev];
+			double score = ev->detect_callback(ev_ctx, detection, conv, &cur_anom_loc);
+			en->evaluators_data[i_ev] = ev_ctx->data;
+
+			if (score > max_score) {
+				max_score = score; // TODO: remember evaluator index?
+				*anom_loc = cur_anom_loc;
+			}
+		}
+		//ulog(LLOG_INFO, "Statetrans engine: Anomaly score = %.2lf\n", max_score);
+	}
+
+	return max_score;
 }
 
 static void engined_change_mode_walk_trie_cb(const uint8_t *key, size_t key_size, struct trie_data *data, void *userdata) {
-    struct engine *en = (struct engine*) userdata;
-    
-    // Prepare evaluator context
-    struct evaluator_context ev_ctx = {
-        .plugin_ctx = en->plugin_ctx,
-        .timeslots = en->timeslots,
-        .timeslot_cnt = en->timeslot_cnt,
-        //.transition_count = 0		// Will be set per statemachine
-        //.statmachine_index = 0        // Per statemachine
-    };
-    
-    uint8_t *host_learning = engine_get_host_profile(en, key, key_size, LEARNING);
-    uint8_t *host_detection = engine_get_host_profile(en, key, key_size, DETECTION);
-    
-    // Call detection profile creation for each evaluator
-    size_t i_sm;
-    for (i_sm = 0; i_sm < en->statemachine_cnt; i_sm++) {
-        struct statemachine *sm = en->statemachines[i_sm];
-        
-        // Modify evaluator context according to current statemachine
-        ev_ctx.statmachine_index = i_sm;
-        ev_ctx.transition_count = sm->transition_count;
-        
-        size_t i_ev;
-        for (i_ev = 0; i_ev < en->evaluator_cnt; i_ev++) {
-            struct evaluator *ev = en->evaluators[i_ev];
+	struct engine *en = (struct engine*) userdata;
+	
+	char *mac_str = format_mac(en->plugin_ctx->temp_pool, key);
+	ulog(LLOG_DEBUG, "Statetrans engine: Creating detection profile for host [%s]\n", mac_str);
+	
+	// Prepare evaluator context
+	struct evaluator_context ev_ctx = {
+		.plugin_ctx = en->plugin_ctx,
+		.timeslots = en->timeslots,
+		.timeslot_cnt = en->timeslot_cnt,
+		//.transition_count = 0		// Will be set per statemachine
+		//.statmachine_index = 0        // Per statemachine
+	};
 
-            // Evaluator-specific data for learning profile
-            struct learn_profile *learning;
-            learning = (struct learn_profile *) (host_learning + en->learn_eval_profile_offsets[i_ev]);
+	uint8_t *host_learning = (uint8_t *) data;
+	uint8_t *host_detection = engine_get_host_profile(en, key, key_size, DETECTION);
 
-            // Evaluator-specific data for detection profile
-            struct detect_profile *detection;
-            detection = (struct detect_profile *) (host_detection + en->detect_eval_profile_offsets[i_ev]);
+	// Call detection profile creation for each evaluator
+	size_t i_sm;
+	for (i_sm = 0; i_sm < en->statemachine_cnt; i_sm++) {
+		struct statemachine *sm = en->statemachines[i_sm];
 
-            
-            // Restore evaluator data pointer, do the profile creation and save the pointer
-            ev_ctx.data = en->evaluators_data[i_ev]; 
-            ev->create_profile(ev_ctx, learning, detection);
-            en->evaluators_data[i_ev] = ev_ctx.data;
-        }
-    }
+		// Modify evaluator context according to current statemachine
+		ev_ctx.statemachine_index = i_sm;
+		ev_ctx.transition_cnt = sm->transition_count;
+
+		size_t i_ev;
+		for (i_ev = 0; i_ev < en->evaluator_cnt; i_ev++) {
+			struct evaluator *ev = en->evaluators[i_ev];
+
+			ulog(LLOG_INFO, "Statetrans engine:    statemachine '%s' and evaluator '%s'\n", sm->name,  ev->name);
+		
+			// Evaluator-specific data for learning profile
+			struct learn_profile *learning;
+			learning = (struct learn_profile *) (host_learning + en->learn_eval_profile_offsets[i_ev]);
+
+			// Evaluator-specific data for detection profile
+			struct detect_profile *detection;
+			detection = (struct detect_profile *) (host_detection + en->detect_eval_profile_offsets[i_ev]);
+
+
+			// Restore evaluator data pointer, do the profile creation and save the pointer
+			ev_ctx.data = en->evaluators_data[i_ev];
+			ev->create_profile(&ev_ctx, learning, detection);
+			en->evaluators_data[i_ev] = ev_ctx.data;
+		}
+	}
+	ulog(LLOG_DEBUG, "Statetrans engine: Detection profile for host [%s] finished\n", mac_str);
 }
 
 
+static void engine_print_init_info(struct context *ctx, timeslot_interval_t *timeslots, size_t timeslot_cnt, double threshold, const char *logfile) {
+	char *buf;
+	if (timeslot_cnt)
+		buf = mem_pool_printf(ctx->temp_pool, "%zu", (size_t) timeslots[0]);
+	else 
+		buf = NULL;
+	
+	size_t i_ts;
+	for (i_ts = 1; i_ts < timeslot_cnt; i_ts++) {
+		buf = mem_pool_printf(ctx->temp_pool, "%s,%zu", buf, (size_t) timeslots[i_ts]);
+	}
+
+	ulog(LLOG_DEBUG, "Statetrans engine: init: threshold=%.2lf timesslots[%zu]={%s} logfile='%s'\n", threshold, timeslot_cnt, buf, logfile);
+}
+
+static void engine_log(struct engine *en, const char *level, const char *msg) {
+	time_t t;
+	struct tm tm;
+	
+	t = time(NULL);
+	localtime_r(&t, &tm);
+	fprintf(en->logfile, "%02d-%02d-%02d %2d:%02d:%02d [%s]: %s\n",
+		tm.tm_year + 1900,
+		tm.tm_mon + 1,
+		tm.tm_mday,
+		tm.tm_hour,
+		tm.tm_min,
+		tm.tm_sec,
+		level,
+		msg
+	);
+	fflush(en->logfile);
+	
+}

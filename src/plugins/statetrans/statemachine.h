@@ -1,6 +1,6 @@
 /*
     Ucollect - small utility for real-time analysis of network data
-    Copyright (C) 2015 Tomas Morvay
+    Copyright (C) 2016 Tomas Morvay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -22,6 +22,12 @@
 
 #include "../../core/context.h"
 
+#include "conversation.h"
+
+#include <stddef.h>
+#include <stdint.h>
+#include <stdbool.h>
+
 typedef uint16_t statemachine_state_t;
 typedef uint16_t statemachine_transition_t;
 
@@ -39,7 +45,6 @@ struct statemachine_context {
         struct statemachine_data *data; // Can be changed by statemachine
 };
 
-
 struct statemachine_timeslot {
 	timeslot_value_t value;
 	timeslot_aggr_value_t aggr_value;
@@ -54,22 +59,12 @@ struct statemachine_conversation {
     uint64_t last_pkt_ts;
     bool terminated;    // Finished correctly or timed out
     
-    
     // Number of elements is equal to number of timeslots
     //  usage: timeslots[ts][statemachine.trans_cnt]
-    statemachine_timeslot **timeslots; 
-    // timeslot_start[ts]
+    struct statemachine_timeslot **timeslots; 
+    // timeslot_starts[ts]
     uint64_t *timeslot_starts;
 };
-
-// learning_profiles[host_key][evaluator][convers_index].timeslots[ts] 
-//      host_key - tree key
-//      evaluator - array index
-//      convers_index - index in linked list
-//      ts - timeslot index
-
-
-////////////////
 
 // Statemachine specific
 struct learn_profile;
@@ -81,23 +76,11 @@ struct statemachine {
 	
 	void(*init_callback) (struct statemachine_context *ctx);
 	void(*finish_callback) (struct statemachine_context *ctx);
-	void(*packet_callback) (struct statemachine_context *ctx, const struct packet_info *info);	
-	struct statemachine_conversation *(*get_next_finished_conv_callback) (struct statemachine_context *ctx);
-	void(*clean_timedout_convs_callback) (struct statemachine_context *ctx);
+	void(*packet_callback) (struct statemachine_context *ctx, const struct packet_info *pkt);	
+	struct statemachine_conversation *(*get_next_finished_conv_callback) (struct statemachine_context *ctx, uint64_t now);
+	void(*clean_timedout_convs_callback) (struct statemachine_context *ctx, uint64_t now);
+	
+	// TODO: transition & state to string convertors
 };
-
-
-
-/*
-	conversations[key<five_touple>]  // four_touple is enough
-						.state
-						.last_packet_ts
-						.timeslots[ts]
-							.values[statemachine.state_cnt] 			// Define type for count
-							.aggr_values[statemachine.state_cnt]
-							.aggr_value_cnt[statemachine.state_cnt]
-							.last_ts
-		
-*/
 
 #endif

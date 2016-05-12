@@ -25,19 +25,9 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
-/*
-init(sm_list, evaluator_list)
-
-// use loader.h pluglib_load() - returns struct returned by pluglib_info() in lib
-load_plugin()
-	load_statemachine()
-	load_evaluator()
-
-handle_packet()
-*/
-
-
+struct profile_key;
 
 // Identifier made up from field in struct packet (core/packet.h)
 struct conversation_id {
@@ -50,12 +40,24 @@ struct conversation_id {
     uint16_t src_port;
     uint16_t dst_port;
     
-    // 'T' - TCP, 'U' - UDP, 'I' - ICMP
-    char app_protocol;  
+    uint8_t *profile_key;
+    uint8_t profile_key_len;
+    
+    // ('T' - TCP, 'U' - UDP, 'I' - ICMP) - removed
+    //char app_protocol;  
 };
 
-size_t conversation_addr_len(struct conversation_id *conv);
-void conversation_extract_identifier(const packet_info *pkt);
+size_t conversation_id_addr_len(struct conversation_id *conv);
+void conversation_id_from_packet(struct conversation_id *conv, struct mem_pool *pool, const struct packet_info *pkt);
+char *conversation_id_format_4tuple(struct mem_pool *pool, const struct conversation_id *conv, const char *arrow);
 
+
+char *format_ip4(struct mem_pool *pool, const uint8_t *ip);
+char *format_ip6(struct mem_pool *pool,const uint8_t *ip);
+char *format_ip(struct mem_pool *pool,const uint8_t *ip, bool ip4);
+char *format_mac(struct mem_pool *pool,const uint8_t *mac);
+char *format_4tuple(struct mem_pool *pool,const uint8_t *ip1, uint16_t port1, const uint8_t *ip2, uint16_t port2, bool ipv4, const char *arrow);
+char *packet_format_4tuple(struct mem_pool *pool, const struct packet_info *pkt, const char *arrow);
+char *packet_format_layer_info(struct mem_pool *pool, const struct packet_info *pkt, const char *arrow);
 
 #endif

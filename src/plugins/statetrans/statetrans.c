@@ -1,6 +1,6 @@
 /*
     Ucollect - small utility for real-time analysis of network data
-    Copyright (C) 2015 Tomas Morvay
+    Copyright (C) 2016 Tomas Morvay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -17,6 +17,19 @@
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
 
+/*
+ * test e.g.:
+ *	learning:
+ *	       for i in `seq 1 30`; do curl google.com; sleep 0.2; done 
+ *	detection
+ *	       sudo nmap -PN -sS -p 1000-1005 1.1.1.1
+ * 
+ * build with -DSTATETRANS_DEBUG to enable debugging outputs 
+ */
+
+
+#include "engine.h"
+
 #include "../../core/plugin.h"
 #include "../../core/context.h"
 #include "../../core/util.h"
@@ -24,6 +37,7 @@
 #include "../../core/loop.h"
 #include "../../core/trie.h"
 #include "../../core/packet.h"
+#include "packet_buffer.h"
 
 #include <string.h>
 #include <time.h>
@@ -36,54 +50,74 @@
 #include <inttypes.h>
 
 struct user_data {
-	bool active;
-	struct mem_pool *active_pool, *standby_pool; // One pool to allocate the trie from, another to be able to copy some data to when cleaning the first one
-	
+	struct engine *engine;
+	struct packet_buffer *packet_buf;
 };
 
 static void timeout(struct context *context, void *data __attribute__((unused)), size_t id __attribute__((unused))) {
-	ulog(LLOG_WARN, "TUKABEL timeout\n");
-	loop_timeout_add(context->loop, 1000, context, NULL, timeout);
+	ulog(LLOG_DEBUG, "Statetrans: changing mode to DETECTION ============================================\n");
+	struct user_data *u = context->user_data;
+	
+	engine_change_mode(u->engine, context, DETECTION);
+	ulog(LLOG_DEBUG, "Statetrans: mode change finished\n");
 }
 
 static void init(struct context *context) {
-	//timeout(context, NULL, 0);
+	ulog(LLOG_DEBUG, "Statetrans: Init\n");
+#ifdef STATETRANS_DEBUG
+	ulog(LLOG_DEBUG, "Statetrans: STATETRANS_DEBUG defined\n");
+#endif	
+	
+	context->user_data = mem_pool_alloc(context->permanent_pool, sizeof(struct user_data));
+	struct user_data *u = context->user_data;
+	
+	timeslot_interval_t timeslots[] = {1, 10, 100, 1000, 10000, 100000, 1000000};
+	size_t timeslot_cnt = sizeof(timeslots) / sizeof(timeslot_interval_t);
+	
+	double threshold = 0.95;
+	char *logfile = "statetrans.log";
+	size_t pkt_buf_size = 20;
+	
+	u->packet_buf = packet_buffer_create(context->permanent_pool, pkt_buf_size);
+	u->engine = engine_create(context, timeslots, timeslot_cnt, threshold, logfile);
+			
+	// Switch to detection after given time
+	// TODO: more advanced mode change condition can be given by server
+	
+	
+	uint32_t learning_length = 90000;
+	loop_timeout_add(context->loop, learning_length, context, NULL, timeout);
 }
-
 
 static void packet_handle(struct context *context, const struct packet_info *info) {
-	ulog(LLOG_WARN, "TUKABEL packet_handle ------\n");
-	char *buf = mem_pool_alloc(context->temp_pool, 2000);
-}
-
-static void communicate(struct context *context, const uint8_t *data, size_t length) {
-	ulog(LLOG_WARN, "TUKABEL communicate\n");
-}
-
-static bool config_check(struct context *context) {	
-	// return false to fail with "no configuration available" message
-
-	const struct config_node *conf = loop_plugin_option_get(context, "test");
-	ulog(LLOG_WARN, "TUKABEL: There are %zu options\n", conf ? conf->value_count : 0);
-	if (conf) {
-		for (size_t i = 0; i < conf->value_count; i++)
-			ulog(LLOG_WARN, "  Val: %s\n", conf->values[i]);
+	struct user_data *u = context->user_data;
+	
+	// Debug log
+	char *fourtuple = packet_format_4tuple(context->temp_pool, info, " ==> ");
+	char *layers = packet_format_layer_info(context->temp_pool, info, " -> ");
+	ulog(LLOG_DEBUG, "Statetrans: Packet[%s] %s\n", layers, fourtuple);
+	
+	// Buffer packets & get the oldest one after the buffer is filled
+	const struct packet_info *buffered_pkt = packet_buffer_add(u->packet_buf, info);
+	if(!buffered_pkt) {
+#ifdef STATETRANS_DEBUG
+		ulog(LLOG_DEBUG, "Statetrans: Not enough packets in packet buffer, delaying processing\n");
+#endif
+		return;
 	}
-	conf = loop_plugin_option_get(context, "Test3");
-	if (conf) {
-		ulog(LLOG_ERROR, "Test3 is available\n");
-		return true;
-	}
-	return true;
-}
-
-static void config_finish(struct context *context, bool activate) {
-	(void)context;
-	ulog(LLOG_WARN, "TUKABEL finish, activate: %d\n", (int)activate);
+	
+	// Debug log
+	fourtuple = packet_format_4tuple(context->temp_pool, buffered_pkt, " ==> ");
+	//layers = packet_format_layer_info(context->temp_pool, buffered_pkt, " -> ");
+	ulog(LLOG_DEBUG, "Statetrans: Processing buffered packet [%s] ts=%"PRIu64"\n", fourtuple, buffered_pkt->timestamp);
+	
+	engine_handle_packet(u->engine, context, buffered_pkt);
 }
 
 void destroy(struct context *context) {
-	ulog(LLOG_WARN, "TUKABEL destroy\n");
+	struct user_data *u = context->user_data;
+	
+	engine_destroy(u->engine, context);
 }
 
 #ifndef STATIC
@@ -93,25 +127,16 @@ unsigned api_version() {
 
 #endif
 #ifdef STATIC
-struct plugin *plugin_info_tukabel(void) {
+struct plugin *plugin_info_statetrans(void) {
 #else
 struct plugin *plugin_info(void) {
 #endif
-	ulog(LLOG_WARN, "TUKABEL plugin_info\n");
-	//static struct pluglib_import *imports[] = {
-	//	&hello_world_import,
-	//	NULL
-	//};
 	static struct plugin plugin = {
 		.name = "Statetrans",
 		.version = 1,
-		//.imports = imports,
 		.init_callback = init,
 		.finish_callback = destroy, 
-		.packet_callback = packet_handle,
-		.uplink_data_callback = communicate,
-		.config_check_callback = config_check,
-		.config_finish_callback = config_finish
+		.packet_callback = packet_handle
 	};
 	return &plugin;
 }

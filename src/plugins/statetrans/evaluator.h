@@ -1,6 +1,6 @@
 /*
     Ucollect - small utility for real-time analysis of network data
-    Copyright (C) 2015 Tomas Morvay
+    Copyright (C) 2016 Tomas Morvay
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -20,17 +20,14 @@
 #ifndef UCOLLECT_STATETRANS_EVALUATOR_H
 #define UCOLLECT_STATETRANS_EVALUATOR_H
 
-//#include "statemachine.h"
+#include "statemachine.h"
 //#include "../../core/context.h"
 
 #include <stddef.h>
 #include <stdint.h>
 
-typedef timeslot_interval_t uint32_t;
-
 struct context;
 struct statemachine_conversation;
-
 struct evaluator_data;
 
 struct evaluator_context {
@@ -40,8 +37,8 @@ struct evaluator_context {
 	timeslot_interval_t *timeslots;
         
         // Set when meaning full, should be 0 otherwise (init etc..)
-	size_t transition_count;	
-        size_t statmachine_index;
+	size_t transition_cnt;	
+        size_t statemachine_index;
         
         struct evaluator_data *data;
 };
@@ -49,20 +46,9 @@ struct evaluator_context {
 struct learn_profile;
 struct detect_profile;
 
-/*
-tree of conversations (statemachine local)
-conversations[key<five_touple>]  // four_touple is enough
-				.state	
-				.last_packet_ts
-				.timeslots[ts][statemachine.trans_cnt]
-									.value
-									.aggr_value
-									.aggr_cnt
-*/
-
-struct evaluator_conversation {
-    
-
+struct anomaly_location {
+    size_t timeslot;
+    size_t transition;
 };
 
 struct evaluator {
@@ -70,10 +56,12 @@ struct evaluator {
     size_t learn_profile_size;
     size_t detect_profile_size;
 
+    
+    //TODO: update param list
     void (*init_callback) (struct evaluator_context *ctx);
     void (*finish_callback) (struct evaluator_context *ctx);
     void (*learn_callback) (struct evaluator_context *ctx, struct learn_profile *learning, const struct statemachine_conversation *conv);
-    double (*detect_callback) (struct evaluator_context *ctx, struct detect_profile *detection, const struct statemachine_conversation *conv);
+    double (*detect_callback) (struct evaluator_context *ctx, struct detect_profile *detection, const struct statemachine_conversation *conv, struct anomaly_location *anom_loc);
     void (*create_profile) (struct evaluator_context *ctx, struct learn_profile *learning, struct detect_profile *detection);
 };
 
