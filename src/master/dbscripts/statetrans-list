@@ -1,0 +1,32 @@
+#!/bin/sh
+
+#	FOREIGN KEY (client) REFERENCES clients(id)
+
+
+#client, timestamp, family, src_ip
+. ./dbconfig
+
+psql -U "$DBADMIN" -d "$DB" $DBPARAMS <<ENDSQL
+BEGIN;
+
+DROP TABLE IF EXISTS statetrans_list;
+
+CREATE TABLE statetrans_list (
+	id BIGINT NOT NULL PRIMARY KEY,
+	timestamp TIMESTAMP NOT NULL,
+	src_ip INET NOT NULL,
+	active BOOLEAN NOT NULL DEFAULT true
+);
+CREATE SEQUENCE statetrans_list_ids OWNED BY statetrans_list.id;
+ALTER TABLE statetrans_list ALTER COLUMN id SET DEFAULT NEXTVAL('statetrans_list_ids');
+
+GRANT ALL ON statetrans_list TO $DBUPDATER;
+GRANT ALL ON statetrans_list TO $DBCLEANER;
+GRANT ALL ON statetrans_list TO $DBARCHIVIST;
+
+GRANT ALL ON SEQUENCE statetrans_list_ids TO $DBUPDATER;
+GRANT ALL ON SEQUENCE statetrans_list_ids TO $DBCLEANER;
+GRANT ALL ON SEQUENCE statetrans_list_ids TO $DBARCHIVIST;
+
+COMMIT;
+ENDSQL
