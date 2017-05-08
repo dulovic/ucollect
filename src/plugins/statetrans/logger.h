@@ -1,6 +1,6 @@
 /*
     Ucollect - small utility for real-time analysis of network data
-    Copyright (C) 2016 Tomas Morvay
+    Copyright (C) 2017 Martin Dulovic
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -15,30 +15,21 @@
     You should have received a copy of the GNU General Public License along
     with this program; if not, write to the Free Software Foundation, Inc.,
     51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
-*/
+ */
 
-#ifndef UCOLLECT_STATETRANS_ENGINE_H
-#define UCOLLECT_STATETRANS_ENGINE_H
+#include "conversation.h"
+#include "engine.h"
 
-#include "statemachine.h"
-#include "evaluator.h"
-#include "logger.h"
+struct logger;
 
-enum detection_mode {
-    LEARNING,
-    DETECTION
-};
+struct logger *logger_create(struct context *ctx, const char *logfile);
 
-struct engine;
+void file_close(struct logger *log);
 
-struct engine *engine_create(struct context *ctx, timeslot_interval_t *timeslots, size_t timeslot_cnt, double threshold, const char *logfile, struct logger *log);
+void write_log(struct logger *log, const char *msg);
 
-void engine_handle_packet(struct engine *en, struct context *ctx, const struct packet_info *pkt, struct logger *log);
+void write_t(struct logger *log, const char *level, const char *msg);
 
-void engine_change_mode(struct engine *en, struct context *ctx, enum detection_mode mode, struct logger *log);
+void send_anomaly(struct context *context, double score, double threshold, const struct conversation_id *conv, struct logger *log);
 
-void engine_destroy(struct engine *en, struct context *ctx);
-
-void update_treshold(struct engine *en, double threshold, struct logger *log);
-
-#endif
+void send_to_server(struct context *context, struct logger *log, uint8_t *msg, size_t msg_size);

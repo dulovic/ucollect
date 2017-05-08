@@ -1,4 +1,4 @@
 LIBRARIES += src/plugins/statetrans/libplugin_statetrans
-libplugin_statetrans_MODULES := statetrans engine statemachine_tcp evaluator_chebyshev conversation packet_buffer
+libplugin_statetrans_MODULES := statetrans engine statemachine_tcp evaluator_chebyshev conversation packet_buffer logger
 
 DOCS += src/plugins/statetrans

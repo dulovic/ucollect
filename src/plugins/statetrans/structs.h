@@ -31,9 +31,7 @@ struct statemachine_context {
 	mem_pool *permanent_pool; // ?
 	// timeslot intervals
 	// timeslot cnt
-	
-	
-	
+
 };
 
 

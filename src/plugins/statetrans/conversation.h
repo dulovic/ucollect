@@ -60,4 +60,13 @@ char *format_4tuple(struct mem_pool *pool,const uint8_t *ip1, uint16_t port1, co
 char *packet_format_4tuple(struct mem_pool *pool, const struct packet_info *pkt, const char *arrow);
 char *packet_format_layer_info(struct mem_pool *pool, const struct packet_info *pkt, const char *arrow);
 
+uint16_t dst_port( const struct packet_info *pkt);
+uint16_t src_port( const struct packet_info *pkt);
+char pkt_direction(const struct packet_info *pkt);
+
+uint8_t *dst_ip_conv(struct mem_pool *pool, const struct conversation_id *conv);
+uint8_t *src_ip_conv(struct mem_pool *pool, const struct conversation_id *conv);
+uint16_t dst_port_conv(struct mem_pool *pool, const struct conversation_id *conv);
+uint16_t src_port_conv(struct mem_pool *pool, const struct conversation_id *conv);
+
 #endif

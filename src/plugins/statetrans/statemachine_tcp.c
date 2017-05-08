@@ -298,6 +298,7 @@ static void tcp_clean_timedout(struct statemachine_context *ctx, uint64_t now __
 		ulog(LLOG_DEBUG, "Statetrans TCP: Conversation DB consolidation finished\n");
 	}
 }
+
 ////////////////////////////////////////////////////////////////////////////////
 
 static struct tcp_conv_key *tcp_get_key(const struct packet_info *pkt, struct mem_pool *pool, bool reversed) {
@@ -783,7 +784,6 @@ static void tcp_mark_conv_as_deleted(struct statemachine_data *d, struct trie_da
 	conv->deleted = true; // Mark as finished
 	d->delayed_deleted_count++;
 }
-
 
 static bool tcp_should_consolidate_convs(struct statemachine_context *ctx) {
 	struct statemachine_data *d = ctx->data;

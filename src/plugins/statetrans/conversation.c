@@ -19,6 +19,8 @@
 
 #include "conversation.h"
 
+#include "../../core/util.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
@@ -184,4 +186,66 @@ char *packet_format_layer_info(struct mem_pool *pool, const struct packet_info *
 	}
 
 	return buf;
+}
+
+// Martin
+
+uint16_t dst_port(const struct packet_info *pkt) {
+  uint16_t d_p;
+  
+  while (pkt && !pkt->ip_protocol)
+    pkt = pkt->next;
+  
+  if (!pkt || !pkt->ip_protocol) {
+    //|TODO
+  }
+  else {
+     d_p = pkt->ports[END_DST];
+  }
+  return d_p;
+}
+
+uint16_t src_port(const struct packet_info *pkt) {
+  uint16_t d_p;
+  
+  while (pkt && !pkt->ip_protocol)
+    pkt = pkt->next;
+  
+  if (!pkt || !pkt->ip_protocol) {
+    //|TODO
+  }
+  else {
+     d_p = pkt->ports[END_SRC];
+  }
+  return d_p;
+}
+
+char pkt_direction(const struct packet_info *pkt) {
+  switch (pkt->direction) {
+    case DIR_IN:
+      return 'I';
+      break;	    
+    case DIR_OUT:
+      return 'O';
+      break;
+  
+    default:
+      return 'U';
+  }
+}
+
+uint8_t *dst_ip_conv(struct mem_pool *pool, const struct conversation_id *conv) {
+  return conv->dst_ip;
+}
+
+uint8_t *src_ip_conv(struct mem_pool *pool, const struct conversation_id *conv) {
+  return conv->src_ip;
+}
+
+uint16_t dst_port_conv(struct mem_pool *pool, const struct conversation_id *conv) {
+  return conv->dst_port;
+}
+
+uint16_t src_port_conv(struct mem_pool *pool, const struct conversation_id *conv) {
+  return conv->src_port;
 }

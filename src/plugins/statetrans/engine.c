@@ -18,12 +18,14 @@
  */
 
 #include "engine.h"
+#include "logger.h"
 
 #include "../../core/mem_pool.h"
 #include "../../core/context.h"
 #include "../../core/trie.h"
 #include "../../core/packet.h"
 #include "../../core/util.h"
+#include "../../core/loop.h"
 
 #include "conversation.h"
 #include "statemachine_tcp.h"
@@ -34,6 +36,8 @@
 #include <stdio.h>
 #include <time.h>
 #include <inttypes.h>
+#include <endian.h>
+#include <arpa/inet.h>
 
 struct engine {
 	enum detection_mode mode;
@@ -84,7 +88,19 @@ static void engine_log(struct engine *en, const char *level, const char *msg);
 
 ////////////////////////////////////////////////////////////////////////////////
 
-struct engine *engine_create(struct context *ctx, timeslot_interval_t *timeslots, size_t timeslot_cnt, double threshold, const char *logfile) {
+void update_treshold(struct engine *en, double threshold, struct logger *log) {
+  
+  char msg[64];
+  snprintf(msg, sizeof msg, "ENGINE Update - Changing Threshold form %.2f to %.2f", en->threshold, threshold);
+  write_t(log, "INFO", msg);
+  
+  en-> threshold = threshold;
+}
+
+struct engine *engine_create(struct context *ctx, timeslot_interval_t *timeslots, size_t timeslot_cnt, double threshold, const char *logfile, struct logger *log) {
+  
+	write_t(log, "INFO", "ENGINE - creating engine (start)");
+	
 	engine_print_init_info(ctx, timeslots, timeslot_cnt, threshold, logfile);
 	
 	struct engine *en;
@@ -93,6 +109,10 @@ struct engine *engine_create(struct context *ctx, timeslot_interval_t *timeslots
 	en->plugin_ctx = ctx; // This will be updated on each call
 	
 	en->threshold = threshold;
+	
+	char msgg[64];
+	snprintf(msgg, sizeof msgg, "ENGINE - Treshold: %.2lf", en->threshold);
+	write_t(log, "INFO", msgg);
 
 	// Copy timeslot intervals
 	en->timeslot_cnt = timeslot_cnt;
@@ -119,16 +139,32 @@ struct engine *engine_create(struct context *ctx, timeslot_interval_t *timeslots
 	en->logfile = fopen(logfile, "w");
 
 	ulog(LLOG_DEBUG, "Statetrans engine: init done\n");
+	write_t(log, "INFO", "ENGINE - creating engine (done)");
 	
 	return en;
 }
 
-void engine_handle_packet(struct engine *en, struct context *ctx, const struct packet_info *pkt) {
+struct ss {
+  uint16_t score;
+  //uint16_t src_port;
+} __attribute__((packed));
+
+void engine_handle_packet(struct engine *en, struct context *ctx, const struct packet_info *pkt, struct logger *log) {
 	assert(en->mode == LEARNING || en->mode == DETECTION);
 
 	char *fourtuple = packet_format_4tuple(ctx->temp_pool, pkt, " ==> ");
 	char *layers = packet_format_layer_info(ctx->temp_pool, pkt, " -> ");
 	ulog(LLOG_DEBUG, "Statetrans engine: got packet[%s] %s\n", layers, fourtuple);
+	
+	uint16_t dp = dst_port(pkt);
+	uint16_t sp = src_port(pkt);
+	
+	if(dp == 5679 || sp == 5679) {
+	  //write_t(log, "WARN", "client-server communication - ignore");
+	  return;
+	}
+
+	//write_t(log, "WARN", "ENGINE - packet handle");
 
 	en->plugin_ctx = ctx; // Updated on each call
 	uint64_t now = pkt->timestamp;
@@ -164,11 +200,15 @@ void engine_handle_packet(struct engine *en, struct context *ctx, const struct p
 		ev_ctx.statemachine_index = i_sm;
 		ev_ctx.transition_cnt = sm->transition_count;
 
+		//write_t(log, "WARN", "ENGINE - FOR");
+		
 		// Process finished (closed, timedout, ..) conversations from statemachine
 		struct statemachine_conversation *conv;
 		while ((conv = sm->get_next_finished_conv_callback(&sm_ctx, now))) {
 			char *fourtuple = conversation_id_format_4tuple(ctx->temp_pool, &conv->id, " -> ");
 			ulog(LLOG_DEBUG, "Statetrans engine: got finished conversation %s\n", fourtuple);
+			
+			//write_t(log, "WARN", "ENGINE - WHILE");
 			
 			//Get host key (local MAC address)
 			uint8_t *host_key = conv->id.profile_key;
@@ -196,9 +236,61 @@ void engine_handle_packet(struct engine *en, struct context *ctx, const struct p
 				
 				// Log to file
 				engine_log(en, "ANOMALY", msg);
-			} else {
+
+				write_t(log, "WARN", msg);
+				
+				
+				// Threshold to BYTE-ORDER
+				int thr = (int)(en->threshold * 100);
+				thr = htons(thr);
+				
+				// Score to BYTE-ORDER
+				int scr = (int)(score * 100);
+				scr = htons(scr);
+				
+				uint8_t *d_ip = dst_ip_conv(ctx->temp_pool, &conv->id);
+				uint8_t *s_ip = src_ip_conv(ctx->temp_pool, &conv->id);
+				
+				size_t ip_len = conversation_id_addr_len(&conv->id);
+				uint8_t family;
+				if (ip_len == 4)
+				  family = 4;
+				else
+				  family = 6;
+				
+				if ((s_ip[0] == 192 && s_ip[1] == 168) || (s_ip[0] == 10) || (s_ip[0] == 172) ) {
+				  write_t(log, "ERROR", "SRC IP - PRIVATE IP !");
+				}
+
+				// DST port to BYTE-ORDER
+				uint16_t d_port = dst_port_conv(ctx->temp_pool, &conv->id);
+				d_port = htons(d_port);
+				
+				// SRC port to BYTE-ORDER
+				uint16_t s_port = src_port_conv(ctx->temp_pool, &conv->id);
+				s_port = htons(s_port);
+				
+				// Actual UNIX time to BYTE-ORDER
+				uint64_t now = htobe64((unsigned long)time(NULL));
+				
+				size_t message_size = 1 + 8 + 2 + 1 + 2 + 2 + ip_len + ip_len;
+				uint8_t *message;
+				*message = (uint8_t)'A';			// 1 Byte - OP code
+				memcpy(message + 1,  &now, 8); 			// 8 Byte - Unix time
+				memcpy(message + 9,  &scr, 2);			// 2 Byte - Score
+				memcpy(message + 11, &family, 1);		// 1 Byte - Family
+				memcpy(message + 12, &s_port, 2);		// 2 Byte - SRC port
+				memcpy(message + 14, &d_port, 2);		// 2 Byte - DST port
+				memcpy(message + 16, s_ip, ip_len);		// 4/16 Byte - SRC IP
+				memcpy(message + 16 + ip_len, d_ip, ip_len);	// 4/16 Byte - DST IP	
+
+				send_to_server(ctx, log, message, message_size);
+			} 
+			else {
 				char *msg = mem_pool_printf(ctx->temp_pool, "score(%.2lf) [%s]", score, fourtuple);
 				engine_log(en, "INFO", msg);
+				
+				//write_t(log, "INFO", "ENGINE - NOT ANOMALY (info)");
 			}
 
 
@@ -213,7 +305,8 @@ void engine_handle_packet(struct engine *en, struct context *ctx, const struct p
 	ulog(LLOG_DEBUG, "Statetrans engine: packet processing finished\n");
 }
 
-void engine_change_mode(struct engine *en, struct context *ctx, enum detection_mode mode) {
+void engine_change_mode(struct engine *en, struct context *ctx, enum detection_mode mode, struct logger *log) {
+  
 	en->plugin_ctx = ctx;
 
 	char *old_s = (en->mode == LEARNING) ? "LEARNING" : "DETECTION";
@@ -237,6 +330,10 @@ void engine_change_mode(struct engine *en, struct context *ctx, enum detection_m
 	en->mode = mode;
 	
 	ulog(LLOG_INFO, "Statetrans engine: Mode change finished (%s -> %s)\n", old_s, new_s);
+	
+	char msgg[64];
+	snprintf(msgg, sizeof msgg, "ENGINE - Changing mode (%s -> %s)", old_s, new_s);
+	write_t(log, "INFO", msgg);
 }
 
 void engine_destroy(struct engine *en __attribute__((unused)), struct context *ctx __attribute__((unused))) {
@@ -357,7 +454,6 @@ static uint8_t *engine_get_host_profile(struct engine *en, const uint8_t *host_k
 }
 
 // Pass conversation to all evaluators and return max anomaly score (in learning mode always 0.0)
-
 static double engine_process_finished_conv(struct engine *en, struct evaluator_context *ev_ctx, const uint8_t *host_profile, const struct statemachine_conversation *conv, struct anomaly_location *anom_loc) {
 	size_t i_ev;
 	double max_score = 0.0L;
@@ -468,7 +564,6 @@ static void engined_change_mode_walk_trie_cb(const uint8_t *key, size_t key_size
 	}
 	ulog(LLOG_DEBUG, "Statetrans engine: Detection profile for host [%s] finished\n", mac_str);
 }
-
 
 static void engine_print_init_info(struct context *ctx, timeslot_interval_t *timeslots, size_t timeslot_cnt, double threshold, const char *logfile) {
 	char *buf;
