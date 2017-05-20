@@ -46,6 +46,8 @@ CREATE TABLE statetrans_list (
 CREATE SEQUENCE statetrans_list_ids OWNED BY statetrans_list.id;
 ALTER TABLE statetrans_list ALTER COLUMN id SET DEFAULT NEXTVAL('statetrans_list_ids');
 
+INSERT INTO known_plugins (name) VALUES ('Statetrans');
+
 GRANT ALL ON statetrans_list TO $DBUPDATER;
 GRANT ALL ON statetrans_list TO $DBCLEANER;
 GRANT ALL ON statetrans_list TO $DBARCHIVIST;
